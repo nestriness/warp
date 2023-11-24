@@ -1,4 +1,4 @@
-name: CI for .docker/pulseaudio
+name: CI for warp binary
 
 on:
   pull_request:
