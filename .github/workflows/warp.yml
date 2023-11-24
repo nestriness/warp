@@ -57,11 +57,11 @@ jobs:
         run: cargo build --target ${{ matrix.settings.target }} --manifest-path ./moq-pub/Cargo.toml --release
       
       - name: Copy and rename artifacts (Linux)
-        if: ${{ matrix.settings.host == 'ubuntu-20.04' }}
         run: |
           cp target/${{ matrix.settings.target }}/release/moq-pub ./warp
       
       - name: Publish artifacts (${{ matrix.settings.host }})
+        if: ${{ github.event_name != 'release' }}
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.settings.asset_name }}
@@ -70,6 +70,7 @@ jobs:
           retention-days: 5
       
       - name: Publish release for (${{ matrix.settings.host }})
+        if: ${{ github.event_name == 'release' }}
         uses: svenstaro/upload-release-action@2.7.0
         with: 
           repo_token: ${{ secrets.GITHUB_TOKEN  }}
