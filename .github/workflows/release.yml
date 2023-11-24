@@ -1,0 +1,15 @@
+name: Create a release draft
+
+on:
+    push:
+      branches: [ main ]
+
+jobs:
+  update_release_draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: release-drafter/release-drafter@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

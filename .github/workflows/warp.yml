@@ -1,0 +1,79 @@
+name: CI for warp binary
+
+on:
+  pull_request:
+  schedule:
+    - cron: 0 0 * * * # At the end of everyday
+  push:
+    branches: [main]
+    tags:
+      - v*.*.*
+  release:
+    types: [published]
+
+# Cancel previous runs of the same workflow on the same branch.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+  
+jobs:
+  build-warp:
+    # defaults:
+    #   run:
+    #       working-directory: moq-server
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: ubuntu-20.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
+            asset_name: warp-ubuntu-amd64
+
+    name: Warp for ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        id: toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+          prefix-key: 'v0-rust-deps'
+          shared-key: ${{ matrix.settings.target }}
+
+      - name: Build
+        run: cargo build --target ${{ matrix.settings.target }} --manifest-path ./moq-pub/Cargo.toml --release
+      
+      - name: Copy and rename artifacts (Linux)
+        run: |
+          cp target/${{ matrix.settings.target }}/release/moq-pub ./warp
+      
+      - name: Publish artifacts (${{ matrix.settings.host }})
+        if: ${{ github.event_name != 'release' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.settings.asset_name }}
+          path: ./moq-server/warp
+          if-no-files-found: error
+          retention-days: 5
+      
+      - name: Publish release for (${{ matrix.settings.host }})
+        if: ${{ github.event_name == 'release' }}
+        uses: svenstaro/upload-release-action@2.7.0
+        with: 
+          repo_token: ${{ secrets.GITHUB_TOKEN  }}
+          file: ./moq-server/warp
+          asset_name:  ${{ matrix.settings.asset_name }}
+          tag: ${{ github.ref }}
