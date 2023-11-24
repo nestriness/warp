@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-moq-transport = "0.2.0"
+moq-transport = { path = "./moq-transport" }
 
 # Copied from https://github.com/kixelated/moq-rs/moq-pub
 quinn = "0.10"
