@@ -8,7 +8,7 @@
 #![allow(clippy::non_send_fields_in_send_ty, unused_doc_comments)]
 
 /**
- * plugin-fmp4:
+ * plugin-warp:
  *
  * Since: plugins-rs-0.8.0
  */
