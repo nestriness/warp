@@ -12,6 +12,22 @@ rust-version = "1.70"
 url = "2"
 gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
 gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
+gst-video.workspace = true
+wayland-display-core = { path = "../wayland-display-core" }
+moq-transport = { path = "../moq-transport" }
+tracing.workspace = true
+once_cell.workspace = true
+tracing-subscriber = "0.3.16"
+
+# QUIC
+quinn = "0.10"
+webtransport-quinn = "0.6.1"
+url = "2"
+
+# Crypto
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rustls-native-certs = "0.6"
+rustls-pemfile = "1"
 
 [lib]
 name = "gstwarp"

@@ -34,7 +34,7 @@ impl ElementImpl for MoqSink {
                 "MoQ Sink",
                 "Sink/Network",
                 "Send data over QUIC using the MoQ protocol",
-                "Wanjohi Ryan <elviswanjohi47@gmail.com>",
+                "Wanjohi Ryan<wanjohi.ryan@example.com>",
             )
         });
         Some(&*ELEMENT_METADATA)
@@ -94,58 +94,14 @@ impl BaseSinkImpl for MoqSink {
 
     fn render(&self, element: &Self::Type, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
         // Send buffer data over QUIC using moq_transport.
-        // Extract data from the buffer
-        let data = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+        // from the provided `imp.rs` code. For simplicity, we'll just print the buffer size.
+        
+        let size = buffer.size();
+        println!("Received buffer of size {}", size);
 
-        // Assuming that the upstream element is producing MP4 atoms, we need to distinguish
-        // between 'moof' and 'mdat' atoms. We will also assume that each buffer contains a
-        // complete atom for simplicity. In a real-world scenario, you might need to handle
-        // partial atoms and reassemble them here.
-        //
-        // The first 4 bytes of the buffer contain the size of the atom, and the next 4 bytes
-        // contain the atom type. For 'moof' and 'mdat', we would send them as separate messages
-        // or bundle them together, depending on the protocol requirements.
+        // You would then send the buffer data over QUIC using moq_transport.
+        // This part is omitted and should be implemented based on your transport protocol.
 
-        // Check if the buffer is large enough to contain the size and type of the atom.
-        if data.len() < 8 {
-            gst::element_error!(
-                element,
-                gst::CoreError::Failed,
-                ("Buffer is too small to contain an MP4 atom")
-            );
-            return Err(gst::FlowError::Error);
-        }
-
-        // Read atom size and type
-        let size = u32::from_be_bytes(data[0..4].try_into().unwrap()) as usize;
-        let atom_type = &data[4..8];
-
-        // Ensure the buffer contains the complete atom
-        if size > data.len() {
-            gst::element_error!(
-                element,
-                gst::CoreError::Failed,
-                ("Buffer does not contain the complete MP4 atom")
-            );
-            return Err(gst::FlowError::Error);
-        }
-
-        // Handle 'moof' and 'mdat' atoms
-        match atom_type {
-            b"moof" => {
-                // Handle 'moof' atom
-                // Send the 'moof' atom over the moq_transport protocol
-                // self.moq_transport.send_moof(data.as_slice());
-            },
-            b"mdat" => {
-                // Handle 'mdat' atom
-                // Send the 'mdat' atom over the moq_transport protocol
-                // self.moq_transport.send_mdat(data.as_slice());
-            },
-            _ => {
-                // Handle other atoms or ignore them
-            }
-        }
         Ok(gst::FlowSuccess::Ok)
     }
 }
