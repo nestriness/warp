@@ -1,0 +1,38 @@
+[package]
+name = "warp"
+version = "0.1.0-alpha.1"
+authors = ["Wanjohi Ryan<elviswanjohi47@gmail.com>"]
+repository = "https://github.com/netrisme/warp"
+license = "MIT OR Apache-2.0"
+description = "GStreamer MoQ Sink Plugin"
+edition = "2021"
+rust-version = "1.70"
+
+[dependencies]
+url = "2"
+gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
+gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
+
+[lib]
+name = "gstwarp"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[features]
+static = []
+capi = []
+doc = ["gst/v1_18"]
+
+[package.metadata.capi]
+min_version = "0.9.21"
+
+[package.metadata.capi.header]
+enabled = false
+
+[package.metadata.capi.library]
+install_subdir = "gstreamer-1.0"
+versioning = false
+import_library = false
+
+[package.metadata.capi.pkg_config]
+requires_private = "gstreamer-1.0, gstreamer-base-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
