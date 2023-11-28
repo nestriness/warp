@@ -9,15 +9,11 @@ edition = "2021"
 rust-version = "1.70"
 
 [dependencies]
-url = "2"
-gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
-gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
-gst-video.workspace = true
+gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs",features = ["v1_18"]}
+gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs",features = ["v1_18"]}
+gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs",features = ["v1_18"]}
 wayland-display-core = { path = "../wayland-display-core" }
 moq-transport = { path = "../moq-transport" }
-tracing.workspace = true
-once_cell.workspace = true
-tracing-subscriber = "0.3.16"
 
 # QUIC
 quinn = "0.10"
@@ -37,7 +33,8 @@ path = "src/lib.rs"
 [features]
 static = []
 capi = []
-doc = ["gst/v1_18"]
+doc = []
+default = []
 
 [package.metadata.capi]
 min_version = "0.9.21"
@@ -51,4 +48,5 @@ versioning = false
 import_library = false
 
 [package.metadata.capi.pkg_config]
-requires_private = "gstreamer-1.0, gstreamer-base-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
+requires_private = "gstreamer-1.0, gstreamer-base-1.0, gstreamer-audio-1.0, gstreamer-video-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
+

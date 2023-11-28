@@ -15,13 +15,13 @@
 use gst::glib;
 
 mod fmp4mux;
-mod warpsink;
+// mod warpsink;
 mod waylandsrc;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     waylandsrc::register(plugin)?;
     fmp4mux::register(plugin)?;
-    warpsink::register(plugin)?;
+    // warpsink::register(plugin)?;
     Ok(())
 }
 
