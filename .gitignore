@@ -7,7 +7,7 @@
 # already existing elements were commented out
 
 #/target
-
+/hls*
 
 # Added by cargo
 #
