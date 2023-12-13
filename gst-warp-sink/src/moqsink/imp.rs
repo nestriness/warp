@@ -329,6 +329,7 @@ impl MoqSink {
 
     fn send_to_network(&self, buffer: gst::Buffer) -> Result<(), Box<dyn std::error::Error>> {
         //Let this be our publisher
+        Ok(())
     }
 }
 
@@ -362,11 +363,17 @@ impl ObjectSubclass for MoqSink {
             srcpad,
         }
     }
+
+    type Interfaces;
+
+    type Instance;
+
+    type Class;
 }
 
 impl ObjectImpl for MoqSink {
     fn constructed(&self, obj: &Self::Type) {
-        self.parent_constructed(obj);
+        self.parent_constructed();
         obj.add_pad(&self.srcpad).unwrap();
     }
 }
@@ -536,12 +543,13 @@ impl Sender {
             .with_no_client_auth();
 
         // Allow disabling TLS verification altogether.
-        if config.tls_disable_verify {
-            let noop = NoCertificateVerification {};
-            tls_config
-                .dangerous()
-                .set_certificate_verifier(Arc::new(noop));
-        }
+        // if config.tls_disable_verify {
+        //     let noop = NoCertificateVerification {};
+        //     tls_config
+        //         .dangerous()
+        //         .set_certificate_verifier(Arc::new(noop));
+        // }
+        Ok(())
     }
 
     async fn send_segment(

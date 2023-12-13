@@ -648,7 +648,7 @@ version = "0.12.0-alpha.1"
 source = "git+https://github.com/sdroege/gst-plugin-rs#c7f961cc2216f24e282ed81dbed9be7d29d5ecd0"
 dependencies = [
  "anyhow",
- "gst-plugin-version-helper",
+ "gst-plugin-version-helper 0.8.0 (git+https://github.com/sdroege/gst-plugin-rs)",
  "gstreamer",
  "gstreamer-audio",
  "gstreamer-base",
@@ -660,6 +660,15 @@ dependencies = [
 name = "gst-plugin-version-helper"
 version = "0.8.0"
 source = "git+https://github.com/sdroege/gst-plugin-rs#c7f961cc2216f24e282ed81dbed9be7d29d5ecd0"
+dependencies = [
+ "chrono",
+ "toml_edit 0.21.0",
+]
+
+[[package]]
+name = "gst-plugin-version-helper"
+version = "0.8.0"
+source = "git+https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs#caa1451fe80852ea34917bc0bca1429d0e0f5f1b"
 dependencies = [
  "chrono",
  "toml_edit 0.21.0",
@@ -1060,6 +1069,7 @@ dependencies = [
  "bytes",
  "chrono",
  "gst-plugin-fmp4",
+ "gst-plugin-version-helper 0.8.0 (git+https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs)",
  "gstreamer",
  "gstreamer-app",
  "gstreamer-base",
