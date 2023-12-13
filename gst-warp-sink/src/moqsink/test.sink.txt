@@ -1,0 +1,85 @@
+In the code example you provided, the Mp4Parser struct is responsible for parsing and extracting MP4 atoms from the incoming buffer. When the pop_atom method is called, it checks if there is enough data to form an atom and then extracts it.
+
+To extract precise atoms like mdat, ftyp, moof, and moov, you can follow the pattern already established in the loop in the sink_chain function. This loop calls pop_atom repeatedly to extract atoms from the incoming buffer. When an atom is extracted, it checks the atom's type and processes it accordingly.
+
+Here's a simplified version of the loop that extracts and processes the atoms:
+
+loop {
+    match state.mp4_parser.pop_atom() {
+        Some(atom) => {
+            match atom.atom_type {
+                ATOM_TYPE_FTYPE => {
+                    state.ftype_atom = Some(atom);
+                    // ... process ftype atom
+                },
+                ATOM_TYPE_MOOV => {
+                    state.moov_atom = Some(atom);
+                    // ... process moov atom
+                },
+                ATOM_TYPE_MOOF => {
+                    state.moof_atom = Some(atom);
+                    // ... process moof atom
+                },
+                ATOM_TYPE_MDAT => {
+                    // ... process mdat atom
+                },
+                _ => {
+                    // Unknown or unhandled atom type
+                },
+            }
+        },
+        None => break, // No more atoms to pop, exit the loop
+    }
+}
+In your send_to_network method, you will need to send these atoms over the network. This means you should collect the necessary atoms and then send them in the correct order, depending on whether it's a keyframe or not.
+
+To do this, you can create a FragmentData struct that includes the atoms you need:
+
+struct FragmentData {
+    ftype_atom: Option<Mp4Atom>,
+    moov_atom: Option<Mp4Atom>,
+    moof_atom: Mp4Atom,
+    mdat_atom: Mp4Atom,
+    // ... include other metadata like timestamps
+}
+Then, in your loop, when you have all the necessary atoms (e.g., after you've processed the mdat atom), you can create an instance of FragmentData and pass it to send_to_network:
+
+// Inside the loop, after processing the mdat atom
+let fragment_data = FragmentData {
+    ftype_atom: state.ftype_atom.clone(),
+    moov_atom: state.moov_atom.clone(),
+    moof_atom: state.moof_atom.take().unwrap(),
+    mdat_atom: mdat_atom,
+    // ... set other metadata
+};
+
+// Send the fragment data over the network
+self.send_to_network(fragment_data)?;
+Finally, in your send_to_network method, you can construct the buffer to send based on the FragmentData:
+
+impl MoqSink {
+    // ...
+    fn send_to_network(&self, fragment_data: FragmentData) -> Result<(), Box<dyn std::error::Error>> {
+        // Construct the buffer to send
+        let mut buffer_to_send = Vec::new();
+
+        // If it's a keyframe, include the ftype and moov atoms
+        if let (Some(ftype_atom), Some(moov_atom)) = (fragment_data.ftype_atom, fragment_data.moov_atom) {
+            buffer_to_send.extend_from_slice(&ftype_atom.atom_bytes);
+            buffer_to_send.extend_from_slice(&moov_atom.atom_bytes);
+        }
+
+        // Always include the moof and mdat atoms
+        buffer_to_send.extend_from_slice(&fragment_data.moof_atom.atom_bytes);
+        buffer_to_send.extend_from_slice(&fragment_data.mdat_atom.atom_bytes);
+
+        // Send the buffer over the network using your QUIC implementation
+        // ...
+
+        Ok(())
+    }
+    // ...
+}
+Remember to handle cases where the ftype and moov atoms might not be present, as they're only included for keyframes. The send_to_network method will need to take this into account and only include these atoms when necessary.
+
+The actual network transmission code will depend on the QUIC library you're using, and you'll need to implement the details of establishing connections, creating streams, and sending data accordingly.
