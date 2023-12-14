@@ -1,4 +1,5 @@
 mod moqsink;
+mod relayurl;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     moqsink::register(plugin)?;

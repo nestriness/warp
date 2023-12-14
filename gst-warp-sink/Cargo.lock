@@ -1081,6 +1081,12 @@ dependencies = [
  "m3u8-rs",
  "moq-transport",
  "mp4",
+ "quinn",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pemfile",
+ "url",
+ "webtransport-quinn",
 ]
 
 [[package]]
@@ -1526,6 +1532,7 @@ version = "0.21.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9d5a6813c0759e4609cd494e8e725babae6a2ca7b62a5536a13daaec6fcb7ba"
 dependencies = [
+ "log",
  "ring 0.17.7",
  "rustls-webpki",
  "sct",
