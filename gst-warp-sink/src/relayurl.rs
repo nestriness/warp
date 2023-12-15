@@ -2,7 +2,7 @@ use url::Url;
 #[derive(Clone)]
 pub struct RelayUrl {
     pub host: String,
-    pub port: u16,
+    pub port: i32,
     pub name: String,
 }
 

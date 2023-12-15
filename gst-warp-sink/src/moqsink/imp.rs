@@ -23,17 +23,19 @@ const ELEMENT_AUTHOR: &str = "Wanjohi Ryan <wanjohiryan33@gmail.com>";
 const DEBUG_CATEGORY: &str = ELEMENT_NAME;
 
 const DEFAULT_NAME_LEN: usize = 10; // Length of the random string
+const DEFAULT_PORT: i32 = 4443; //default port for relay server
+const DEFAULT_ADDRESS: Option<&str> = Some("localhost"); //default host is localhost
 
 struct Settings {
-    host: String,
-    port: Option<u16>,
+    host: Option<String>,
+    port: Option<i32>,
     name: Option<String>,
 }
 
 impl Settings {
     fn to_uri(&self) -> String {
         RelayUrl {
-            host: self.host.clone(),
+            host: self.host.clone().unwrap(),
             port: self.port.clone().unwrap(),
             name: self.name.clone().unwrap(),
         }
@@ -51,8 +53,8 @@ impl Default for Settings {
             .collect();
 
         Settings {
-            host: "localhost".to_owned(),
-            port: Some(4443),
+            host: Some("localhost".to_owned()), //localhost
+            port: Some(DEFAULT_PORT),
             name: Some(random_name),
         }
     }
@@ -141,6 +143,88 @@ impl ObjectImpl for MoqSink {
 
         self.obj().set_sync(false);
     }
+
+    fn properties() -> &'static [glib::ParamSpec] {
+        static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
+            vec![
+                glib::ParamSpecString::builder("host")
+                    .nick("Host")
+                    .blurb("The host of the relay server to connect tom, this can be a web url")
+                    .default_value(DEFAULT_ADDRESS)
+                    .build(),
+                glib::ParamSpecInt::builder("port")
+                    .nick("Port")
+                    .blurb("The port of the relay server to connect to, most probably this is a 4443")
+                    .minimum(0)
+                    .maximum(u16::MAX as i32)
+                    .default_value(DEFAULT_PORT)
+                    .build(),
+                glib::ParamSpecString::builder("name")
+                    .nick("Url Name")
+                    .blurb("This is a very long random string to identify your stream on the relay server")
+                    .mutable_ready()
+                    .build(),
+            ]
+        });
+        PROPERTIES.as_ref()
+    }
+
+    fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
+        let mut settings = self.settings.lock().unwrap();
+
+        gst::debug!(
+            CAT,
+            imp: self,
+            "Setting property '{}' to '{:?}'",
+            pspec.name(),
+            value
+        );
+
+        match pspec.name() {
+            "host" => {
+                settings.host = value
+                    .get::<Option<String>>()
+                    .expect("type checked upstream");
+                if settings.port.is_some() && settings.name.is_some() {
+                    let _ = self.set_uri(Some(&settings.to_uri()));
+                }
+            }
+            "port" => {
+                let port = value.get::<i32>().expect("type checked upstream");
+                settings.port = Some(port);
+                if settings.host.is_some() && settings.name.is_some() {
+                    let _ = self.set_uri(Some(&settings.to_uri()));
+                }
+            }
+            "name" => {
+                settings.name = value
+                    .get::<Option<String>>()
+                    .expect("type checked upstream");
+                if settings.host.is_some() && settings.port.is_some() {
+                    let _ = self.set_uri(Some(&settings.to_uri()));
+                }
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
+        let settings = self.settings.lock().unwrap();
+
+        match pspec.name() {
+            "host" => settings.host.to_value(),
+            "name" => settings.name.to_value(),
+            "port" => {
+                // Handle the Option<i32> for the port
+                match settings.port {
+                    Some(port) => port.to_value(),
+                    None => glib::Value::from_type(glib::Type::I32), // Create a "None" Value for i32
+                }
+            }
+
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl GstObjectImpl for MoqSink {}
@@ -191,6 +275,5 @@ impl URIHandlerImpl for MoqSink {
         self.set_uri(Some(uri))
     }
 }
-
 
 impl BaseSinkImpl for MoqSink {}
