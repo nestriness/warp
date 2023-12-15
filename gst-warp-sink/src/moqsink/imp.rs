@@ -8,6 +8,8 @@ use std::sync::Mutex;
 
 use crate::relayurl::*;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
 use url::Url;
@@ -116,6 +118,38 @@ impl MoqSink {
                 }
             }
         };
+
+        // // Initialize shared state and channels
+        // let (sender, receiver) = mpsc::channel(32);
+        // // self.sender = Some(sender);
+
+        // // Spawn a new thread to run the Tokio runtime
+        // std::thread::spawn(move || {
+        //     // Create a new Tokio runtime
+        //     let rt = Runtime::new().unwrap();
+
+        //     // Block on the async code within the Tokio runtime
+        //     rt.block_on(async move {
+        //         // Set up your async tasks here
+        //         let session_task = session.run();
+        //         let media_task = media.run();
+
+        //         tokio::select! {
+        //             res = session_task => {
+        //                 // Handle session result
+        //                 // You might want to send a message to the GStreamer element using the channel
+        //             },
+        //             res = media_task => {
+        //                 // Handle media result
+        //                 // You might want to send a message to the GStreamer element using the channel
+        //             },
+        //             msg = receiver.recv() => {
+        //                 // Handle messages sent from the GStreamer element to the Tokio runtime
+        //                 // These might be control commands or data to process
+        //             }
+        //         }
+        //     });
+        // });
 
         Ok(())
     }
