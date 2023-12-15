@@ -114,8 +114,8 @@ impl MoqSink {
 
         let url_str = url_str.unwrap();
         match parse_relay_url(url_str) {
-            Ok(relayUrl) => {
-                *url = Some(relayUrl);
+            Ok(relay_url) => {
+                *url = Some(relay_url);
                 Ok(())
             }
             Err(_) => Err(glib::Error::new(
