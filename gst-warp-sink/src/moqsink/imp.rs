@@ -7,6 +7,7 @@ use gst_base::subclass::prelude::*;
 use std::sync::Mutex;
 
 use crate::relayurl::*;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
 use url::Url;
@@ -95,6 +96,30 @@ pub struct MoqSink {
 }
 
 impl MoqSink {
+    fn start(&self) -> Result<(), gst::ErrorMessage> {
+        let mut state = self.state.lock().unwrap();
+        let settings = self.settings.lock().unwrap();
+
+        if let State::Started { .. } = *state {
+            unreachable!("Element already started");
+        }
+
+        let relay_url = {
+            let url = self.url.lock().unwrap();
+            match *url {
+                Some(ref url) => url.clone(),
+                None => {
+                    return Err(gst::error_msg!(
+                        gst::ResourceError::Settings,
+                        ["Cannot start without a URL being set"]
+                    ));
+                }
+            }
+        };
+
+        Ok(())
+    }
+
     fn set_uri(self: &MoqSink, url_str: Option<&str>) -> Result<(), glib::Error> {
         let state = self.state.lock().unwrap();
 
@@ -276,4 +301,8 @@ impl URIHandlerImpl for MoqSink {
     }
 }
 
-impl BaseSinkImpl for MoqSink {}
+impl BaseSinkImpl for MoqSink {
+    fn start(&self) -> Result<(), gst::ErrorMessage> {
+        self.start()
+    }
+}
