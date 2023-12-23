@@ -2,13 +2,13 @@ use gst::glib;
 use gst::glib::once_cell::sync::Lazy;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
-use gst_base::prelude::*;
-use gst_base::subclass::prelude::*;
+
 use std::sync::Mutex;
 
 use crate::relayurl::*;
+use crate::RUNTIME;
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
@@ -90,65 +90,128 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     )
 });
 
-#[derive(Default)]
+#[derive(Default, object_subclass)]
 pub struct MoqSink {
-    state: Mutex<State>,
+    state: Mutex<Option<State>>,
     url: Mutex<Option<Url>>,
     settings: Mutex<Settings>,
 }
 
+impl Default for MoqSink {
+    fn default() -> Self {
+        MoqSink {
+            state: Mutex::new(None),
+            url: Mutex::new(None),
+            settings: Mutex::new(Settings::default()),
+        }
+    }
+}
+
 impl MoqSink {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().unwrap();
-        let settings = self.settings.lock().unwrap();
+        let mut state = self.state.lock().map_err(|e| {
+            gst::error_msg!(
+                gst::ResourceError::Settings,
+                ["Failed to acquire state lock: {}", e]
+            )
+        })?;
 
         if let State::Started { .. } = *state {
             unreachable!("Element already started");
         }
 
-        let relay_url = {
-            let url = self.url.lock().unwrap();
-            match *url {
-                Some(ref url) => url.clone(),
-                None => {
-                    return Err(gst::error_msg!(
-                        gst::ResourceError::Settings,
-                        ["Cannot start without a URL being set"]
-                    ));
-                }
-            }
-        };
-
-        // // Initialize shared state and channels
-        // let (sender, receiver) = mpsc::channel(32);
-        // // self.sender = Some(sender);
-
-        // // Spawn a new thread to run the Tokio runtime
-        // std::thread::spawn(move || {
-        //     // Create a new Tokio runtime
-        //     let rt = Runtime::new().unwrap();
-
-        //     // Block on the async code within the Tokio runtime
-        //     rt.block_on(async move {
-        //         // Set up your async tasks here
-        //         let session_task = session.run();
-        //         let media_task = media.run();
-
-        //         tokio::select! {
-        //             res = session_task => {
-        //                 // Handle session result
-        //                 // You might want to send a message to the GStreamer element using the channel
-        //             },
-        //             res = media_task => {
-        //                 // Handle media result
-        //                 // You might want to send a message to the GStreamer element using the channel
-        //             },
-        //             msg = receiver.recv() => {
-        //                 // Handle messages sent from the GStreamer element to the Tokio runtime
-        //                 // These might be control commands or data to process
-        //             }
+        // let relay_url = {
+        //     let url = self.url.lock().unwrap();
+        //     match *url {
+        //         Some(ref url) => url.clone(),
+        //         None => {
+        //             return Err(gst::error_msg!(
+        //                 gst::ResourceError::Settings,
+        //                 ["Cannot start without a URL being set"]
+        //             ));
         //         }
-        //     });
+        //     }
+        // };
+        let relay_url = self
+            .url
+            .lock()
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::ResourceError::Settings,
+                    ["Failed to acquire URL lock: {}", e]
+                )
+            })?
+            .clone()
+            .ok_or_else(|| {
+                gst::error_msg!(
+                    gst::ResourceError::Settings,
+                    ["Cannot start without a URL being set"]
+                )
+            })?;
+
+        gst::trace!(
+            CAT,
+            imp: self,
+            "connecting to relay: url={}",
+            relay_url
+        );
+
+        // Initialize shared state and channels
+        let (sender, receiver) = mpsc::channel(32);
+        // self.sender = Some(sender);
+
+        // Spawn a new thread to run the Moq server
+        RUNTIME.spawn(async move {
+            let tracer = tracing_subscriber::FmtSubscriber::builder()
+                .with_max_level(tracing::Level::WARN)
+                .finish();
+            tracing::subscriber::set_global_default(tracer).unwrap();
+
+            let (publisher, subscriber) = broadcast::new("");
+
+            // Create a list of acceptable root certificates.
+            let mut roots = rustls::RootCertStore::empty();
+
+            // Add the platform's native root certificates.
+            for cert in
+                rustls_native_certs::load_native_certs().context("could not load platform certs")?
+            {
+                roots
+                    .add(&rustls::Certificate(cert.0))
+                    .context("failed to add root cert")?;
+            }
+
+            let mut tls_config = rustls::ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+
+            // this one is important
+            tls_config.alpn_protocols = vec![webtransport_quinn::ALPN.to_vec()];
+
+            let arc_tls_config = std::sync::Arc::new(tls_config);
+            let quinn_client_config = quinn::ClientConfig::new(arc_tls_config);
+
+            let mut endpoint =
+                quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0))?;
+            endpoint.set_default_client_config(quinn_client_config);
+
+            let session = webtransport_quinn::connect(&endpoint, &relay_url)
+                .await
+                .context("failed to create WebTransport session")?;
+
+            let session = moq_transport::session::Client::publisher(session, subscriber)
+                .await
+                .context("failed to create MoQ Transport session")?;
+
+            session.run().await.context("session error")?;
+
+            Ok::<(), anyhow::Error>(())
+        });
+
+        // Update the state to indicate the element has started
+        // *state = State::Started(StartedState {
+        //     broadcast: publisher,
         // });
 
         Ok(())
@@ -179,27 +242,28 @@ impl MoqSink {
                 *url = Some(relay_url);
                 Ok(())
             }
-            Err(_) => Err(glib::Error::new(
-                gst::URIError::BadUri,
-                "Could not parse URI",
-            )),
+            Err(err) => Err(glib::Error::new(gst::URIError::BadUri, &err)),
         }
     }
 }
 
-#[glib::object_subclass]
 impl ObjectSubclass for MoqSink {
     const NAME: &'static str = ELEMENT_CLASS_NAME;
     type Type = super::MoqSink;
     type ParentType = gst_base::BaseSink;
 
     type Interfaces = (gst::URIHandler,);
+
+    type Instance;
+
+    type Class;
 }
+
+impl GstObjectImpl for WaylandDisplaySrc {}
 
 impl ObjectImpl for MoqSink {
     fn constructed(&self) {
         self.parent_constructed();
-
         self.obj().set_sync(false);
     }
 
@@ -208,7 +272,7 @@ impl ObjectImpl for MoqSink {
             vec![
                 glib::ParamSpecString::builder("host")
                     .nick("Host")
-                    .blurb("The host of the relay server to connect tom, this can be a web url")
+                    .blurb("The host of the relay server to connect to, this can be a web url")
                     .default_value(DEFAULT_ADDRESS)
                     .build(),
                 glib::ParamSpecInt::builder("port")

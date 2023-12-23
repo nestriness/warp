@@ -1071,16 +1071,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "m3u8-rs"
-version = "5.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c1d7ba86f7ea62f17f4310c55e93244619ddc7dadfc7e565de1967e4e41e6e7"
-dependencies = [
- "chrono",
- "nom",
-]
-
-[[package]]
 name = "me"
 version = "0.1.0"
 dependencies = [
@@ -1091,13 +1081,11 @@ dependencies = [
  "gst-plugin-version-helper 0.8.0 (git+https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs)",
  "gstreamer",
  "gstreamer-app",
- "gstreamer-base",
  "gstreamer-check",
  "gstreamer-gl",
  "gstreamer-pbutils",
  "gstreamer-video",
  "isobmff",
- "m3u8-rs",
  "moq-transport",
  "mp4",
  "once_cell",
@@ -1118,12 +1106,6 @@ name = "memchr"
 version = "2.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
-
-[[package]]
-name = "minimal-lexical"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniz_oxide"
@@ -1180,16 +1162,6 @@ name = "muldiv"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "956787520e75e9bd233246045d19f42fb73242759cc57fba9611d940ae96d4b0"
-
-[[package]]
-name = "nom"
-version = "7.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
-dependencies = [
- "memchr",
- "minimal-lexical",
-]
 
 [[package]]
 name = "nu-ansi-term"
