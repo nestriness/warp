@@ -3,7 +3,7 @@ use gst::glib::once_cell::sync::Lazy;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::relayurl::*;
 use crate::RUNTIME;
@@ -63,23 +63,13 @@ impl Default for Settings {
     }
 }
 
-#[derive(Debug)]
-struct StartedState {
-    broadcast: broadcast::Publisher,
-}
-
-impl StartedState {
-    pub fn new(broadcast: broadcast::Publisher) -> StartedState {
-        StartedState { broadcast }
-    }
-}
-
 #[derive(Default)]
 enum State {
     #[default]
     Stopped,
-    Completed,
-    Started(StartedState),
+    Started {
+        broadcast: Mutex<broadcast::Publisher>,
+    },
 }
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
@@ -120,34 +110,37 @@ impl MoqSink {
             unreachable!("Element already started");
         }
 
-        // let relay_url = {
-        //     let url = self.url.lock().unwrap();
-        //     match *url {
-        //         Some(ref url) => url.clone(),
-        //         None => {
-        //             return Err(gst::error_msg!(
-        //                 gst::ResourceError::Settings,
-        //                 ["Cannot start without a URL being set"]
-        //             ));
-        //         }
-        //     }
-        // };
-        let relay_url = self
-            .url
-            .lock()
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::ResourceError::Settings,
-                    ["Failed to acquire URL lock: {}", e]
-                )
-            })?
-            .clone()
-            .ok_or_else(|| {
-                gst::error_msg!(
-                    gst::ResourceError::Settings,
-                    ["Cannot start without a URL being set"]
-                )
-            })?;
+        let relay_url = {
+            let url = self.url.lock().unwrap();
+            match *url {
+                Some(ref url) => url.clone(),
+                None => {
+                    return Err(gst::error_msg!(
+                        gst::ResourceError::Settings,
+                        ["Cannot start without a URL being set"]
+                    ));
+                }
+            }
+        };
+
+        //More complex but with error handling
+
+        // let relay_url = self
+        //     .url
+        //     .lock()
+        //     .map_err(|e| {
+        //         gst::error_msg!(
+        //             gst::ResourceError::Settings,
+        //             ["Failed to acquire URL lock: {}", e]
+        //         )
+        //     })?
+        //     .clone()
+        //     .ok_or_else(|| {
+        //         gst::error_msg!(
+        //             gst::ResourceError::Settings,
+        //             ["Cannot start without a URL being set"]
+        //         )
+        //     })?;
 
         gst::trace!(
             CAT,
@@ -156,9 +149,7 @@ impl MoqSink {
             relay_url
         );
 
-        // Initialize shared state and channels
-        let (sender, receiver) = mpsc::channel(32);
-        // self.sender = Some(sender);
+        let (publisher, subscriber) = broadcast::new("");
 
         // Spawn a new thread to run the Moq server
         RUNTIME.spawn(async move {
@@ -166,8 +157,6 @@ impl MoqSink {
                 .with_max_level(tracing::Level::WARN)
                 .finish();
             tracing::subscriber::set_global_default(tracer).unwrap();
-
-            let (publisher, subscriber) = broadcast::new("");
 
             // Create a list of acceptable root certificates.
             let mut roots = rustls::RootCertStore::empty();
@@ -210,9 +199,9 @@ impl MoqSink {
         });
 
         // Update the state to indicate the element has started
-        // *state = State::Started(StartedState {
-        //     broadcast: publisher,
-        // });
+        *state = Some(State::Started {
+            broadcast: Mutex::new(publisher),
+        });
 
         Ok(())
     }
@@ -247,6 +236,7 @@ impl MoqSink {
     }
 }
 
+#[glib::object_subclass]
 impl ObjectSubclass for MoqSink {
     const NAME: &'static str = ELEMENT_CLASS_NAME;
     type Type = super::MoqSink;

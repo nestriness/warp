@@ -646,29 +646,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gst-plugin-fmp4"
-version = "0.12.0-alpha.1"
-source = "git+https://github.com/sdroege/gst-plugin-rs#c7f961cc2216f24e282ed81dbed9be7d29d5ecd0"
-dependencies = [
- "anyhow",
- "gst-plugin-version-helper 0.8.0 (git+https://github.com/sdroege/gst-plugin-rs)",
- "gstreamer",
- "gstreamer-audio",
- "gstreamer-base",
- "gstreamer-pbutils",
- "gstreamer-video",
-]
-
-[[package]]
-name = "gst-plugin-version-helper"
-version = "0.8.0"
-source = "git+https://github.com/sdroege/gst-plugin-rs#c7f961cc2216f24e282ed81dbed9be7d29d5ecd0"
-dependencies = [
- "chrono",
- "toml_edit 0.21.0",
-]
-
-[[package]]
 name = "gst-plugin-version-helper"
 version = "0.8.0"
 source = "git+https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs#caa1451fe80852ea34917bc0bca1429d0e0f5f1b"
@@ -796,33 +773,6 @@ dependencies = [
  "glib-sys",
  "gobject-sys",
  "gstreamer-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
-name = "gstreamer-gl"
-version = "0.22.0"
-source = "git+https://gitlab.freedesktop.org/gstreamer/gstreamer-rs#7f234c88acec5f5233342fa01e0c7ffde51bd049"
-dependencies = [
- "glib",
- "gstreamer",
- "gstreamer-base",
- "gstreamer-gl-sys",
- "gstreamer-video",
- "libc",
-]
-
-[[package]]
-name = "gstreamer-gl-sys"
-version = "0.22.0"
-source = "git+https://gitlab.freedesktop.org/gstreamer/gstreamer-rs#7f234c88acec5f5233342fa01e0c7ffde51bd049"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "gstreamer-video-sys",
  "libc",
  "system-deps",
 ]
@@ -1077,14 +1027,11 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
- "gst-plugin-fmp4",
- "gst-plugin-version-helper 0.8.0 (git+https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs)",
+ "gst-plugin-version-helper",
  "gstreamer",
  "gstreamer-app",
  "gstreamer-check",
- "gstreamer-gl",
  "gstreamer-pbutils",
- "gstreamer-video",
  "isobmff",
  "moq-transport",
  "mp4",
