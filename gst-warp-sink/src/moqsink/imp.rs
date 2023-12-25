@@ -29,6 +29,113 @@ const DEFAULT_NAME_LEN: usize = 10; // Length of the random string
 const DEFAULT_PORT: i32 = 4443; //default port for relay server
 const DEFAULT_ADDRESS: Option<&str> = Some("localhost"); //default host is localhost
 
+const ATOM_TYPE_FTYPE: u32 = 1718909296;
+const ATOM_TYPE_MOOV: u32 = 1836019574;
+const ATOM_TYPE_MOOF: u32 = 1836019558;
+const ATOM_TYPE_MDAT: u32 = 1835295092;
+
+#[derive(Debug)]
+struct Mp4Atom {
+    pub atom_type: u32,
+    // Includes atom size and type.
+    pub atom_bytes: Vec<u8>,
+}
+
+impl Mp4Atom {
+    pub fn len(&self) -> usize {
+        self.atom_bytes.len()
+    }
+}
+
+#[derive(Debug)]
+struct Mp4Parser {
+    buf: Vec<u8>,
+}
+
+impl Mp4Parser {
+    pub fn new() -> Mp4Parser {
+        Mp4Parser { buf: Vec::new() }
+    }
+
+    pub fn add(&mut self, buf: &[u8]) {
+        self.buf.extend_from_slice(buf);
+    }
+
+    // Returns true if all or part of an MDAT body has been added.
+    pub fn have_mdat(&self) -> bool {
+        if self.buf.len() > 8 {
+            let atom_type = u32::from_be_bytes(self.buf[4..8].try_into().unwrap());
+            atom_type == ATOM_TYPE_MDAT
+        } else {
+            false
+        }
+    }
+
+    pub fn pop_atom(&mut self) -> Option<Mp4Atom> {
+        if self.buf.len() >= 8 {
+            let atom_size = u32::from_be_bytes(self.buf[0..4].try_into().unwrap()) as usize;
+            let atom_type = u32::from_be_bytes(self.buf[4..8].try_into().unwrap());
+            if self.buf.len() >= atom_size {
+                let mut atom_bytes = Vec::with_capacity(atom_size);
+                // TODO: Swap vectors?
+                atom_bytes.extend_from_slice(&self.buf[0..atom_size]);
+                assert_eq!(self.buf.len(), atom_size);
+                self.buf.clear();
+                Some(Mp4Atom {
+                    atom_type,
+                    atom_bytes,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Started {
+    broadcast: broadcast::Publisher,
+
+    mp4_parser: Mp4Parser,
+    // Atoms in init sequence that must be repeated at each key frame.
+    ftype_atom: Option<Mp4Atom>,
+    moov_atom: Option<Mp4Atom>,
+    // These atoms that must be buffered and pushed as a single buffer.
+    moof_atom: Option<Mp4Atom>,
+    // Below members that track current fragment (moof, mdat).
+    /// Minimum PTS in fragment.
+    fragment_pts: ClockTime,
+    /// Minimum DTS in fragment.
+    fragment_dts: ClockTime,
+    /// Maximum PTS + duration in fragment.
+    fragment_max_pts_plus_duration: ClockTime,
+    /// Minimum offset in fragment.
+    fragment_offset: Option<u64>,
+    /// Maximum offset_end in fragment.
+    fragment_offset_end: Option<u64>,
+    fragment_buffer_flags: gst::BufferFlags,
+}
+
+impl Started {
+    pub fn new(broadcast: broadcast::Publisher) -> Started {
+        Started {
+            broadcast,
+            mp4_parser: Mp4Parser::new(),
+            ftype_atom: None,
+            moov_atom: None,
+            moof_atom: None,
+            fragment_pts: ClockTime::none(),
+            fragment_dts: ClockTime::none(),
+            fragment_max_pts_plus_duration: ClockTime::none(),
+            fragment_offset: None,
+            fragment_offset_end: None,
+            fragment_buffer_flags: gst::BufferFlags::DELTA_UNIT,
+        }
+    }
+}
+
 struct Settings {
     host: Option<String>,
     port: Option<i32>,
@@ -67,9 +174,7 @@ impl Default for Settings {
 enum State {
     #[default]
     Stopped,
-    Started {
-        broadcast: Mutex<broadcast::Publisher>,
-    },
+    Started(Started),
 }
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
@@ -82,7 +187,7 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
 
 #[derive(Default, object_subclass)]
 pub struct MoqSink {
-    state: Mutex<Option<State>>,
+    state: Mutex<State>,
     url: Mutex<Option<Url>>,
     settings: Mutex<Settings>,
 }
@@ -199,9 +304,7 @@ impl MoqSink {
         });
 
         // Update the state to indicate the element has started
-        *state = Some(State::Started {
-            broadcast: Mutex::new(publisher),
-        });
+        *state = State::Started(Started::new(broadcast));
 
         Ok(())
     }
@@ -392,5 +495,202 @@ impl URIHandlerImpl for MoqSink {
 impl BaseSinkImpl for MoqSink {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         self.start()
+    }
+    fn render(
+        &self,
+        element: &Self::Type,
+        buffer: &gst::Buffer,
+    ) -> Result<gst::FlowSuccess, gst::FlowError> {
+        if let State::Stopped = *self.state.lock().unwrap() {
+            gst::element_imp_error!(self, gst::CoreError::Failed, ["Not started yet"]);
+            return Err(gst::FlowError::Error);
+        }
+
+        gst::trace!(CAT, imp: self, "Rendering {:?}", buffer);
+
+        let mut state = self.state.lock().unwrap();
+
+        let started_state = match *state {
+            State::Started(ref mut started_state) => started_state,
+            State::Stopped => {
+                unreachable!("Element should be started already");
+            }
+        };
+
+        let map = buffer.map_readable().map_err(|_| {
+            gst::element_imp_error!(self, gst::CoreError::Failed, ["Failed to map buffer"]);
+            gst::FlowError::Error
+        })?;
+
+        let input_buf = map.as_ref();
+
+        started_state.mp4_parser.add(input_buf);
+
+        // Update cummulative fragment variables.
+        // Buffer PTS, etc. are only valid if this buffer contains MDAT data.
+        if started_state.mp4_parser.have_mdat() {
+            assert!(buffer.pts().is_some());
+            if started_state.fragment_pts.is_none() || started_state.fragment_pts > buffer.pts() {
+                started_state.fragment_pts = buffer.pts();
+            }
+            if started_state.fragment_dts.is_none() || started_state.fragment_dts > buffer.dts() {
+                started_state.fragment_dts = buffer.dts();
+            }
+            let pts_plus_duration = buffer.pts() + buffer.duration();
+            if started_state.fragment_max_pts_plus_duration.is_none()
+                || started_state.fragment_max_pts_plus_duration < pts_plus_duration
+            {
+                started_state.fragment_max_pts_plus_duration = pts_plus_duration;
+            }
+            if buffer.offset() != gst::BUFFER_OFFSET_NONE
+                && (started_state.fragment_offset.is_none()
+                    || started_state.fragment_offset.unwrap() > buffer.offset())
+            {
+                started_state.fragment_offset = Some(buffer.offset());
+            }
+            if buffer.offset_end() != gst::BUFFER_OFFSET_NONE
+                && (started_state.fragment_offset_end.is_none()
+                    || started_state.fragment_offset_end.unwrap() < buffer.offset_end())
+            {
+                started_state.fragment_offset_end = Some(buffer.offset_end());
+            }
+            if started_state
+                .fragment_buffer_flags
+                .contains(gst::BufferFlags::DELTA_UNIT)
+                && !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT)
+            {
+                started_state
+                    .fragment_buffer_flags
+                    .remove(gst::BufferFlags::DELTA_UNIT);
+            }
+            if buffer.flags().contains(gst::BufferFlags::DISCONT) {
+                started_state
+                    .fragment_buffer_flags
+                    .insert(gst::BufferFlags::DISCONT);
+            }
+            gst::trace!(CAT, imp: self, "Updated state={:?}", started_state);
+        }
+
+        loop {
+            match started_state.mp4_parser.pop_atom() {
+                Some(atom) => {
+                    gst::log!(CAT, imp: self, "atom_size={}, atom_type={}", atom.len(), atom.atom_type);
+                    match atom.atom_type {
+                        ATOM_TYPE_FTYPE => {
+                            started_state.ftype_atom = Some(atom);
+                            gst::log!(CAT, imp: self, "ftype_atom={:?}", started_state.ftype_atom);
+                        }
+                        ATOM_TYPE_MOOV => {
+                            started_state.moov_atom = Some(atom);
+                            gst::log!(CAT, imp: self, "moov_atom={:?}", started_state.moov_atom);
+                        }
+                        ATOM_TYPE_MOOF => {
+                            started_state.moof_atom = Some(atom);
+                            gst::log!(CAT, imp: self, "moof_atom={:?}", started_state.moof_atom);
+                        }
+                        ATOM_TYPE_MDAT => {
+                            let mdat_atom = atom;
+                            match (
+                                started_state.ftype_atom.as_ref(),
+                                started_state.moov_atom.as_ref(),
+                                started_state.moof_atom.as_ref(),
+                            ) {
+                                (Some(ftype_atom), Some(moov_atom), Some(moof_atom)) => {
+                                    let include_header = !started_state
+                                        .fragment_buffer_flags
+                                        .contains(gst::BufferFlags::DELTA_UNIT);
+                                    let header_len = if include_header {
+                                        ftype_atom.len() + moov_atom.len()
+                                    } else {
+                                        0
+                                    };
+                                    let output_buf_len =
+                                        header_len + moof_atom.len() + mdat_atom.len();
+
+                                    gst::log!(CAT, imp:self, "Pushing buffer; include_header={}, ftype.len={}, moov.len={}, moof.len={}, mdat.len={}",
+                                    include_header, ftype_atom.len(), moov_atom.len(), moof_atom.len(), mdat_atom.len());
+
+                                    let mut gst_buffer =
+                                        gst::Buffer::with_size(output_buf_len).unwrap();
+                                    {
+                                        let buffer_ref = gst_buffer.get_mut().unwrap();
+                                        buffer_ref.set_pts(started_state.fragment_pts);
+                                        buffer_ref.set_dts(started_state.fragment_dts);
+                                        let duration = started_state.fragment_max_pts_plus_duration
+                                            - started_state.fragment_pts;
+                                        buffer_ref.set_duration(duration);
+                                        buffer_ref.set_offset(
+                                            started_state
+                                                .fragment_offset
+                                                .unwrap_or(gst::BUFFER_OFFSET_NONE),
+                                        );
+                                        buffer_ref.set_offset_end(
+                                            started_state
+                                                .fragment_offset_end
+                                                .unwrap_or(gst::BUFFER_OFFSET_NONE),
+                                        );
+                                        buffer_ref.set_flags(started_state.fragment_buffer_flags);
+                                        let mut buffer_map = buffer_ref.map_writable().unwrap();
+                                        let slice = buffer_map.as_mut_slice();
+                                        let mut pos = 0;
+                                        if include_header {
+                                            slice[pos..pos + ftype_atom.len()]
+                                                .copy_from_slice(&ftype_atom.atom_bytes);
+                                            pos += ftype_atom.len();
+                                            slice[pos..pos + moov_atom.len()]
+                                                .copy_from_slice(&moov_atom.atom_bytes);
+                                            pos += moov_atom.len();
+                                        }
+                                        slice[pos..pos + moof_atom.len()]
+                                            .copy_from_slice(&moof_atom.atom_bytes);
+                                        pos += moof_atom.len();
+                                        slice[pos..pos + mdat_atom.len()]
+                                            .copy_from_slice(&mdat_atom.atom_bytes);
+                                        pos += mdat_atom.len();
+                                        assert_eq!(pos, output_buf_len);
+
+                                        //FIXME: Work on the Json here, instead of redoing it in a new method.
+                                    }
+                                    // Clear fragment variables.
+                                    started_state.fragment_pts = ClockTime::none();
+                                    started_state.fragment_dts = ClockTime::none();
+                                    started_state.fragment_max_pts_plus_duration = ClockTime::none();
+                                    started_state.fragment_offset = None;
+                                    started_state.fragment_offset_end = None;
+                                    started_state.fragment_buffer_flags = gst::BufferFlags::DELTA_UNIT;
+                                    // Push new buffer.
+                                    gst::log!(CAT, imp: self, "Pushing buffer {:?}", gst_buffer);
+                                }
+                                _ => {
+                                    gst_warning!(CAT, obj: pad, "Received mdat without ftype, moov, or moof");
+                                }
+                            }
+                        }
+                        _ => {
+                            gst_warning!(CAT, obj: pad, "Unknown atom type {:?}", atom);
+                        }
+                    }
+                }
+                None => break,
+            }
+        }
+        gst_trace!(CAT, obj: element, "sink_chain: END: state={:?}", state);
+
+        Ok(gst::FlowSuccess::Ok)
+    }
+
+    fn stop(&self) -> Result<(), gst::ErrorMessage> {
+        let mut state = self.state.lock().unwrap();
+
+        if let State::Started(ref mut state) = *state {
+            gst::warning!(CAT, imp: self, "Stopping all threads");
+
+            //TODO: Gracefully kill all running servers here
+        }
+
+        *state = State::Stopped;
+        gst::info!(CAT, imp: self, "Stopped");
+
+        Ok(())
     }
 }
