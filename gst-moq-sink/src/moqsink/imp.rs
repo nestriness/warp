@@ -2,14 +2,15 @@ use gst::glib;
 use gst::glib::once_cell::sync::Lazy;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
+use gst::ClockTime;
+use gst_base::subclass::prelude::BaseSinkImpl;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::relayurl::*;
 use crate::RUNTIME;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use tokio::sync::mpsc;
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
 use url::Url;
@@ -106,11 +107,11 @@ struct Started {
     moof_atom: Option<Mp4Atom>,
     // Below members that track current fragment (moof, mdat).
     /// Minimum PTS in fragment.
-    fragment_pts: ClockTime,
+    fragment_pts: Option<ClockTime>,
     /// Minimum DTS in fragment.
-    fragment_dts: ClockTime,
+    fragment_dts: Option<ClockTime>,
     /// Maximum PTS + duration in fragment.
-    fragment_max_pts_plus_duration: ClockTime,
+    fragment_max_pts_plus_duration: Option<ClockTime>,
     /// Minimum offset in fragment.
     fragment_offset: Option<u64>,
     /// Maximum offset_end in fragment.
@@ -126,9 +127,9 @@ impl Started {
             ftype_atom: None,
             moov_atom: None,
             moof_atom: None,
-            fragment_pts: ClockTime::none(),
-            fragment_dts: ClockTime::none(),
-            fragment_max_pts_plus_duration: ClockTime::none(),
+            fragment_pts: ClockTime::NONE,
+            fragment_dts: ClockTime::NONE,
+            fragment_max_pts_plus_duration: ClockTime::NONE,
             fragment_offset: None,
             fragment_offset_end: None,
             fragment_buffer_flags: gst::BufferFlags::DELTA_UNIT,
@@ -185,7 +186,6 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     )
 });
 
-#[derive(Default, object_subclass)]
 pub struct MoqSink {
     state: Mutex<State>,
     url: Mutex<Option<Url>>,
@@ -195,7 +195,7 @@ pub struct MoqSink {
 impl Default for MoqSink {
     fn default() -> Self {
         MoqSink {
-            state: Mutex::new(None),
+            state: Mutex::new(State::Stopped),
             url: Mutex::new(None),
             settings: Mutex::new(Settings::default()),
         }
@@ -228,25 +228,6 @@ impl MoqSink {
             }
         };
 
-        //More complex but with error handling
-
-        // let relay_url = self
-        //     .url
-        //     .lock()
-        //     .map_err(|e| {
-        //         gst::error_msg!(
-        //             gst::ResourceError::Settings,
-        //             ["Failed to acquire URL lock: {}", e]
-        //         )
-        //     })?
-        //     .clone()
-        //     .ok_or_else(|| {
-        //         gst::error_msg!(
-        //             gst::ResourceError::Settings,
-        //             ["Cannot start without a URL being set"]
-        //         )
-        //     })?;
-
         gst::trace!(
             CAT,
             imp: self,
@@ -267,12 +248,34 @@ impl MoqSink {
             let mut roots = rustls::RootCertStore::empty();
 
             // Add the platform's native root certificates.
-            for cert in
-                rustls_native_certs::load_native_certs().context("could not load platform certs")?
-            {
-                roots
-                    .add(&rustls::Certificate(cert.0))
-                    .context("failed to add root cert")?;
+            let certs = {
+                let c = rustls_native_certs::load_native_certs();
+                match c {
+                    Ok(certs) => certs,
+                    Err(e) => {
+                        gst::error!(CAT,"Could not load platform certs : {}", e);
+
+                        return gst::error_msg!(
+                            gst::ResourceError::Failed,
+                            ["could not load platform certs"]
+                        );
+                    }
+                }
+            };
+
+            for cert in certs {
+                let res = roots.add(&rustls::Certificate(cert.0));
+                match res {
+                    Ok(_) => {}
+                    Err(e) => {
+                        gst::error!(CAT, "Failed to add root cert : {}", e);
+
+                        return gst::error_msg!(
+                            gst::ResourceError::Failed,
+                            ["failed to add root cert"]
+                        );
+                    }
+                }
             }
 
             let mut tls_config = rustls::ClientConfig::builder()
@@ -286,25 +289,71 @@ impl MoqSink {
             let arc_tls_config = std::sync::Arc::new(tls_config);
             let quinn_client_config = quinn::ClientConfig::new(arc_tls_config);
 
-            let mut endpoint =
-                quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0))?;
+            let mut endpoint = {
+                let endpoint = quinn::Endpoint::client(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                    0,
+                ));
+
+                match endpoint {
+                    Ok(end) => end,
+                    Err(e) => {
+                        gst::error!(CAT, "Failed to set endpoint to [::]:0 : {}", e);
+
+                        return gst::error_msg!(
+                            gst::ResourceError::Failed,
+                            ["failed to set endpoint to [::]:0"]
+                        );
+                    }
+                }
+            };
+
             endpoint.set_default_client_config(quinn_client_config);
 
-            let session = webtransport_quinn::connect(&endpoint, &relay_url)
-                .await
-                .context("failed to create WebTransport session")?;
+            let session = {
+                let session = webtransport_quinn::connect(&endpoint, &relay_url).await;
 
-            let session = moq_transport::session::Client::publisher(session, subscriber)
-                .await
-                .context("failed to create MoQ Transport session")?;
+                match session {
+                    Ok(session) => session,
+                    Err(e) => {
+                        gst::error!(CAT, "Failed to create WebTransport session: {}", e);
 
-            session.run().await.context("session error")?;
+                        return gst::error_msg!(
+                            gst::ResourceError::Failed,
+                            ["failed to create WebTransport session"]
+                        );
+                    }
+                }
+            };
 
-            Ok::<(), anyhow::Error>(())
+            let session = {
+                let session = moq_transport::session::Client::publisher(session, subscriber).await;
+
+                match session {
+                    Ok(session) => session,
+                    Err(e) => {
+                        gst::error!(CAT, "Failed to create MoQ Transport session: {}", e);
+
+                        return gst::error_msg!(
+                            gst::ResourceError::Failed,
+                            ["failed to create MoQ Transport session"]
+                        );
+                    }
+                }
+            };
+
+            if let Err(e) = session.run().await {
+                gst::error!(CAT, "Session error: {}", e);
+            };
+
+            return gst::error_msg!(
+                gst::ResourceError::Failed,
+                ["something is not working as intended on this thread"]
+            );
         });
 
         // Update the state to indicate the element has started
-        *state = State::Started(Started::new(broadcast));
+        *state = State::Started(Started::new(publisher));
 
         Ok(())
     }
@@ -346,18 +395,14 @@ impl ObjectSubclass for MoqSink {
     type ParentType = gst_base::BaseSink;
 
     type Interfaces = (gst::URIHandler,);
-
-    type Instance;
-
-    type Class;
 }
 
-impl GstObjectImpl for WaylandDisplaySrc {}
+impl GstObjectImpl for MoqSink {}
 
 impl ObjectImpl for MoqSink {
     fn constructed(&self) {
         self.parent_constructed();
-        self.obj().set_sync(false);
+        self.obj();
     }
 
     fn properties() -> &'static [glib::ParamSpec] {
@@ -443,8 +488,6 @@ impl ObjectImpl for MoqSink {
     }
 }
 
-impl GstObjectImpl for MoqSink {}
-
 impl ElementImpl for MoqSink {
     fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
         static ELEMENT_METADATA: Lazy<gst::subclass::ElementMetadata> = Lazy::new(|| {
@@ -496,11 +539,8 @@ impl BaseSinkImpl for MoqSink {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         self.start()
     }
-    fn render(
-        &self,
-        element: &Self::Type,
-        buffer: &gst::Buffer,
-    ) -> Result<gst::FlowSuccess, gst::FlowError> {
+
+    fn render(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
         if let State::Stopped = *self.state.lock().unwrap() {
             gst::element_imp_error!(self, gst::CoreError::Failed, ["Not started yet"]);
             return Err(gst::FlowError::Error);
@@ -536,19 +576,26 @@ impl BaseSinkImpl for MoqSink {
             if started_state.fragment_dts.is_none() || started_state.fragment_dts > buffer.dts() {
                 started_state.fragment_dts = buffer.dts();
             }
-            let pts_plus_duration = buffer.pts() + buffer.duration();
+            let pts = buffer.pts();
+            let duration = buffer.duration();
+
+            let pts_plus_duration = match (pts, duration) {
+                (Some(pts), Some(duration)) => Some(pts + duration),
+                // Handle the case where one or both values are `None`
+                _ => None,
+            };
             if started_state.fragment_max_pts_plus_duration.is_none()
                 || started_state.fragment_max_pts_plus_duration < pts_plus_duration
             {
                 started_state.fragment_max_pts_plus_duration = pts_plus_duration;
             }
-            if buffer.offset() != gst::BUFFER_OFFSET_NONE
+            if buffer.offset() != gst_sys::GST_BUFFER_OFFSET_NONE
                 && (started_state.fragment_offset.is_none()
                     || started_state.fragment_offset.unwrap() > buffer.offset())
             {
                 started_state.fragment_offset = Some(buffer.offset());
             }
-            if buffer.offset_end() != gst::BUFFER_OFFSET_NONE
+            if buffer.offset_end() != gst_sys::GST_BUFFER_OFFSET_NONE
                 && (started_state.fragment_offset_end.is_none()
                     || started_state.fragment_offset_end.unwrap() < buffer.offset_end())
             {
@@ -616,18 +663,31 @@ impl BaseSinkImpl for MoqSink {
                                         let buffer_ref = gst_buffer.get_mut().unwrap();
                                         buffer_ref.set_pts(started_state.fragment_pts);
                                         buffer_ref.set_dts(started_state.fragment_dts);
-                                        let duration = started_state.fragment_max_pts_plus_duration
-                                            - started_state.fragment_pts;
+                                        // let duration =
+                                        //     started_state.fragment_max_pts_plus_duration.clone()
+                                        //         - started_state.fragment_pts.clone();
+
+                                        let pts_plus_duration =
+                                            started_state.fragment_max_pts_plus_duration.clone();
+                                        let fragment_pts = started_state.fragment_pts.clone();
+
+                                        let duration = match (pts_plus_duration, fragment_pts) {
+                                            (Some(pts_plus_duration), Some(fragment_pts)) => {
+                                                Some(pts_plus_duration - fragment_pts)
+                                            }
+                                            // Handle the case where one or both values are `None`
+                                            _ => None,
+                                        };
                                         buffer_ref.set_duration(duration);
                                         buffer_ref.set_offset(
                                             started_state
                                                 .fragment_offset
-                                                .unwrap_or(gst::BUFFER_OFFSET_NONE),
+                                                .unwrap_or(gst_sys::GST_BUFFER_OFFSET_NONE),
                                         );
                                         buffer_ref.set_offset_end(
                                             started_state
                                                 .fragment_offset_end
-                                                .unwrap_or(gst::BUFFER_OFFSET_NONE),
+                                                .unwrap_or(gst_sys::GST_BUFFER_OFFSET_NONE),
                                         );
                                         buffer_ref.set_flags(started_state.fragment_buffer_flags);
                                         let mut buffer_map = buffer_ref.map_writable().unwrap();
@@ -652,29 +712,30 @@ impl BaseSinkImpl for MoqSink {
                                         //FIXME: Work on the Json here, instead of redoing it in a new method.
                                     }
                                     // Clear fragment variables.
-                                    started_state.fragment_pts = ClockTime::none();
-                                    started_state.fragment_dts = ClockTime::none();
-                                    started_state.fragment_max_pts_plus_duration = ClockTime::none();
+                                    started_state.fragment_pts = ClockTime::NONE;
+                                    started_state.fragment_dts = ClockTime::NONE;
+                                    started_state.fragment_max_pts_plus_duration = ClockTime::NONE;
                                     started_state.fragment_offset = None;
                                     started_state.fragment_offset_end = None;
-                                    started_state.fragment_buffer_flags = gst::BufferFlags::DELTA_UNIT;
+                                    started_state.fragment_buffer_flags =
+                                        gst::BufferFlags::DELTA_UNIT;
                                     // Push new buffer.
                                     gst::log!(CAT, imp: self, "Pushing buffer {:?}", gst_buffer);
                                 }
                                 _ => {
-                                    gst_warning!(CAT, obj: pad, "Received mdat without ftype, moov, or moof");
+                                    gst::warning!(CAT, imp: self, "Received mdat without ftype, moov, or moof");
                                 }
                             }
                         }
                         _ => {
-                            gst_warning!(CAT, obj: pad, "Unknown atom type {:?}", atom);
+                            gst::warning!(CAT, imp: self, "Unknown atom type {:?}", atom);
                         }
                     }
                 }
                 None => break,
             }
         }
-        gst_trace!(CAT, obj: element, "sink_chain: END: state={:?}", state);
+        gst::trace!(CAT, imp: self, "sink_chain: END: state={:?}", started_state);
 
         Ok(gst::FlowSuccess::Ok)
     }
