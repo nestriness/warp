@@ -1,32 +1,113 @@
-use anyhow::Context;
 use gst::prelude::*;
-use std::sync::{mpsc, Arc, Mutex};
+use gst::ClockTime;
+
+use std::sync::{Arc, Mutex};
 use url::Url;
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
 use moq_transport::VarInt;
+use std::collections::HashMap;
+use std::io::Cursor;
 
-struct Segment {
-    start_time: gst::ClockTime,
-    duration: gst::ClockTime,
+use mp4::{self, ReadBox};
+
+const ATOM_TYPE_FTYPE: u32 = 1718909296;
+const ATOM_TYPE_MOOV: u32 = 1836019574;
+const ATOM_TYPE_MOOF: u32 = 1836019558;
+const ATOM_TYPE_MDAT: u32 = 1835295092;
+
+#[derive(Debug)]
+struct Mp4Atom {
+    pub atom_type: u32,
+    // Includes atom size and type.
+    pub atom_bytes: Vec<u8>,
+}
+
+impl Mp4Atom {
+    pub fn len(&self) -> usize {
+        self.atom_bytes.len()
+    }
+}
+
+#[derive(Debug)]
+struct Mp4Parser {
+    buf: Vec<u8>,
+}
+
+impl Mp4Parser {
+    pub fn new() -> Mp4Parser {
+        Mp4Parser { buf: Vec::new() }
+    }
+
+    pub fn add(&mut self, buf: &[u8]) {
+        self.buf.extend_from_slice(buf);
+    }
+
+    // Returns true if all or part of an MDAT body has been added.
+    pub fn have_mdat(&self) -> bool {
+        if self.buf.len() > 8 {
+            let atom_type = u32::from_be_bytes(self.buf[4..8].try_into().unwrap());
+            atom_type == ATOM_TYPE_MDAT
+        } else {
+            false
+        }
+    }
+
+    pub fn pop_atom(&mut self) -> Option<Mp4Atom> {
+        if self.buf.len() >= 8 {
+            let atom_size = u32::from_be_bytes(self.buf[0..4].try_into().unwrap()) as usize;
+            let atom_type = u32::from_be_bytes(self.buf[4..8].try_into().unwrap());
+            if self.buf.len() >= atom_size {
+                let mut atom_bytes = Vec::with_capacity(atom_size);
+                // TODO: Swap vectors?
+                atom_bytes.extend_from_slice(&self.buf[0..atom_size]);
+                assert_eq!(self.buf.len(), atom_size);
+                self.buf.clear();
+                Some(Mp4Atom {
+                    atom_type,
+                    atom_bytes,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 struct State {
     // We hold on to publisher so we don't close then while media is still being published.
     broadcast: broadcast::Publisher,
-    start_time: Option<gst::ClockTime>,
-    end_time: Option<gst::ClockTime>,
-    segments: Vec<Segment>,
+
+    // Atoms in init sequence that must be repeated at each key frame.
+    ftype_atom: Option<Mp4Atom>,
+    moov_atom: Option<Mp4Atom>,
+    // These atoms that must be buffered and pushed as a single buffer.
+    moof_atom: Option<Mp4Atom>,
+    // Below members that track current fragment (moof, mdat).
+    /// Minimum PTS in fragment.
+    fragment_pts: Option<ClockTime>,
+    /// Minimum DTS in fragment.
+    fragment_dts: Option<ClockTime>,
+    /// Maximum PTS + duration in fragment.
+    fragment_max_pts_plus_duration: Option<ClockTime>,
+    /// Minimum offset in fragment.
+    fragment_offset: Option<u64>,
+    /// Maximum offset_end in fragment.
+    fragment_offset_end: Option<u64>,
+    fragment_buffer_flags: gst::BufferFlags,
+
     url: Option<Url>,
     bitrate: u64,
     width: u64,
     height: u64,
     wave: String,
+    video_enc: Option<String>,
+    mp4_parser: Mp4Parser,
 }
 
-fn probe_encoder(enc: gst::Element) -> String {
-    let (tx, rx) = mpsc::channel();
-
+fn probe_encoder(state: Arc<Mutex<State>>, enc: gst::Element, is_video: bool) {
     enc.static_pad("src").unwrap().add_probe(
         gst::PadProbeType::EVENT_DOWNSTREAM,
         move |_pad, info| {
@@ -37,18 +118,19 @@ fn probe_encoder(enc: gst::Element) -> String {
                 return gst::PadProbeReturn::Ok;
             };
 
-            match gst_pbutils::codec_utils_caps_get_mime_codec(ev.caps()) {
-                Ok(mime) => {
-                    let _ = tx.send(mime.to_string()); // Send the MIME string
+            let mime = gst_pbutils::codec_utils_caps_get_mime_codec(ev.caps());
 
-                    return gst::PadProbeReturn::Remove; // Remove the probe after getting the MIME
-                }
-                Err(_) => return gst::PadProbeReturn::Drop, // Drop the event on error
+            let mut state = state.lock().unwrap();
+
+            if is_video {
+                state.video_enc = Some(mime.unwrap().into())
+            } else {
+                // state.audio_enc
             }
+
+            gst::PadProbeReturn::Remove
         },
     );
-
-    return rx.recv().unwrap();
 }
 
 pub struct GST {}
@@ -64,18 +146,26 @@ impl GST {
         let pipeline = gst::Pipeline::default();
 
         let state = Arc::new(Mutex::new(State {
-            start_time: None,
-            end_time: None,
-            segments: Vec::new(),
+            ftype_atom: None,
+            moov_atom: None,
+            moof_atom: None,
+            fragment_pts: None,
+            fragment_dts: None,
+            fragment_max_pts_plus_duration: None,
+            fragment_offset: None,
+            fragment_offset_end: None,
+            fragment_buffer_flags: gst::BufferFlags::DELTA_UNIT,
             url: Some(url),
             bitrate: 2_048_000,
             width: 1280,
             height: 720,
             wave: "sine".to_string(),
-            broadcast,
+            broadcast: broadcast.to_owned(),
+            mp4_parser: Mp4Parser::new(),
+            video_enc: None,
         }));
 
-        let state_lock = state.lock().unwrap();
+        let mut state_lock = state.lock().unwrap();
 
         let video_src = gst::ElementFactory::make("videotestsrc")
             .property("is-live", true)
@@ -123,9 +213,6 @@ impl GST {
             .property("fragment-duration", 1.mseconds())
             .build()?;
 
-        //drop the choke hold here
-        drop(state_lock);
-
         let appsink = gst_app::AppSink::builder().buffer_list(true).build();
 
         pipeline.add_many([
@@ -152,109 +239,256 @@ impl GST {
             appsink.upcast_ref(),
         ])?;
 
-        let video_encoder = probe_encoder(video_enc);
+        // let video_encoder = probe_encoder(video_enc);
+
+        // state_lock.video_enc = Some(video_encoder);
+
+        //drop the choke hold here
+        drop(state_lock);
 
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
                     let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                    let mut state = state.lock().unwrap();
-
                     // The muxer only outputs non-empty buffer lists
-                    let mut buffer_list = sample.buffer_list_owned().expect("no buffer list");
+                    let buffer_list = sample.buffer_list_owned().expect("no buffer list");
                     assert!(!buffer_list.is_empty());
 
-                    let mut first = buffer_list.get(0).unwrap();
+                    let first = buffer_list.get(0).unwrap();
 
                     // Each list contains a full segment, i.e. does not start with a DELTA_UNIT
                     assert!(!first.flags().contains(gst::BufferFlags::DELTA_UNIT));
 
-                    // If the buffer has the DISCONT and HEADER flag set then it contains the media
-                    // header, i.e. the `ftyp`, `moov` and other media boxes.
-                    //
-                    // This might be the initial header or the updated header at the end of the stream.
-                    if first
-                        .flags()
-                        .contains(gst::BufferFlags::DISCONT | gst::BufferFlags::HEADER)
-                    {
-                        // Create the catalog track with a single segment.
-
-                        // println!("writing header to {}", path.display());
-                        let map = first.map_readable().unwrap();
-                        // std::fs::write(path, &map).expect("failed to write header");
-                        drop(map);
-
-                        // Remove the header from the buffer list
-                        buffer_list.make_mut().remove(0, 1);
-
-                        // If the list is now empty then it only contained the media header and nothing
-                        // else.
-                        if buffer_list.is_empty() {
-                            return Ok(gst::FlowSuccess::Ok);
-                        }
-
-                        // Otherwise get the next buffer and continue working with that.
-                        first = buffer_list.get(0).unwrap();
-                    }
-
-                    // If the buffer only has the HEADER flag set then this is a segment header that is
-                    // followed by one or more actual media buffers.
-                    assert!(first.flags().contains(gst::BufferFlags::HEADER));
-
-                    let segment = sample
-                        .segment()
-                        .expect("no segment")
-                        .downcast_ref::<gst::ClockTime>()
-                        .expect("no time segment");
-
-                    // Initialize the start time with the first PTS we observed. This will be used
-                    // later for calculating the duration of the whole media for the DASH manifest.
-                    //
-                    // The PTS of the segment header is equivalent to the earliest PTS of the whole
-                    // segment.
-                    let pts = segment
-                        .to_running_time(first.pts().unwrap())
-                        .expect("can't get running time");
-                    if state.start_time.is_none() {
-                        state.start_time = Some(pts);
-                    }
-
-                    // The metadata of the first media buffer is duplicated to the segment header.
-                    // Based on this we can know the timecode of the first frame in this segment.
-                    let meta = first
-                        .meta::<gst_video::VideoTimeCodeMeta>()
-                        .expect("no timecode meta");
-
-                    // let mut path = state.path.clone();
-                    // path.push(format!("segment_{}.cmfv", state.segments.len() + 1));
-                    // println!(
-                    //     "writing segment with timecode {} to {}",
-                    //     meta.tc(),
-                    //     path.display()
-                    // );
-
-                    // Calculate the end time at this point. The duration of the segment header is set
-                    // to the whole duration of this segment.
-                    let duration = first.duration().unwrap();
-                    let end_time = first.pts().unwrap() + first.duration().unwrap();
-                    state.end_time = Some(
-                        segment
-                            .to_running_time(end_time)
-                            .expect("can't get running time"),
-                    );
-
-                    // let mut file = std::fs::File::create(path).expect("failed to open fragment");
                     for buffer in &*buffer_list {
-                        use std::io::prelude::*;
+                        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+                        let input_buf = map.as_ref();
 
-                        let map = buffer.map_readable().unwrap();
-                        // file.write_all(&map).expect("failed to write fragment");
+                        let mut state = state.lock().unwrap();
+
+                        state.mp4_parser.add(input_buf);
+
+                        // Update cummulative fragment variables.
+                        // Buffer PTS, etc. are only valid if this buffer contains MDAT data.
+                        if state.mp4_parser.have_mdat() {
+                            assert!(buffer.pts().is_some());
+                            if state.fragment_pts.is_none() || state.fragment_pts > buffer.pts() {
+                                state.fragment_pts = buffer.pts();
+                            }
+                            if state.fragment_dts.is_none() || state.fragment_dts > buffer.dts() {
+                                state.fragment_dts = buffer.dts();
+                            }
+                            let pts = buffer.pts();
+                            let duration = buffer.duration();
+
+                            let pts_plus_duration = match (pts, duration) {
+                                (Some(pts), Some(duration)) => Some(pts + duration),
+                                // Handle the case where one or both values are `None`
+                                _ => None,
+                            };
+                            if state.fragment_max_pts_plus_duration.is_none()
+                                || state.fragment_max_pts_plus_duration < pts_plus_duration
+                            {
+                                state.fragment_max_pts_plus_duration = pts_plus_duration;
+                            }
+                            if buffer.offset() != gst_sys::GST_BUFFER_OFFSET_NONE
+                                && (state.fragment_offset.is_none()
+                                    || state.fragment_offset.unwrap() > buffer.offset())
+                            {
+                                state.fragment_offset = Some(buffer.offset());
+                            }
+                            if buffer.offset_end() != gst_sys::GST_BUFFER_OFFSET_NONE
+                                && (state.fragment_offset_end.is_none()
+                                    || state.fragment_offset_end.unwrap() < buffer.offset_end())
+                            {
+                                state.fragment_offset_end = Some(buffer.offset_end());
+                            }
+                            if state
+                                .fragment_buffer_flags
+                                .contains(gst::BufferFlags::DELTA_UNIT)
+                                && !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT)
+                            {
+                                state
+                                    .fragment_buffer_flags
+                                    .remove(gst::BufferFlags::DELTA_UNIT);
+                            }
+                            if buffer.flags().contains(gst::BufferFlags::DISCONT) {
+                                state
+                                    .fragment_buffer_flags
+                                    .insert(gst::BufferFlags::DISCONT);
+                            }
+                            log::info!("finished updating fragment time stamps");
+                        }
                     }
 
-                    state.segments.push(Segment {
-                        start_time: pts,
-                        duration,
-                    });
+                    loop {
+                        let mut state = state.lock().unwrap();
+
+                        match state.mp4_parser.pop_atom() {
+                            Some(atom) => {
+                                log::info!("atom_size={}, atom_type={}", atom.len(), atom.atom_type);
+                                match atom.atom_type {
+                                    ATOM_TYPE_FTYPE => {
+                                        state.ftype_atom = Some(atom);
+                                        log::info!("ftype_atom={:?}", state.ftype_atom);
+                                    },
+                                    ATOM_TYPE_MOOV => {
+                                        state.moov_atom = Some(atom);
+
+                                        log::info!("moov_atom={:?}", state.moov_atom);
+
+                                        match (state.ftype_atom.as_ref(), state.moov_atom.as_ref()) {
+                                            (Some(ftype_atom), Some(moov_atom)) => {
+                                                let output_buf_len = ftype_atom.len() + moov_atom.len();
+                                                let mut gst_buffer = gst::Buffer::with_size(output_buf_len).unwrap();
+                                                {
+                                                    let buffer_ref = gst_buffer.get_mut().unwrap();
+                                                    buffer_ref.set_pts(state.fragment_pts);
+                                                    buffer_ref.set_dts(state.fragment_dts);
+
+                                                    let pts_plus_duration =state.fragment_max_pts_plus_duration.clone();
+                                                    let fragment_pts = state.fragment_pts.clone();
+
+                                                    let duration = match (pts_plus_duration, fragment_pts) {
+                                                        (Some(pts_plus_duration), Some(fragment_pts)) => {
+                                                            Some(pts_plus_duration - fragment_pts)
+                                                        }
+                                                        // Handle the case where one or both values are `None`
+                                                        _ => None,
+                                                    };                                                    buffer_ref.set_duration(duration);
+                                                    buffer_ref.set_offset(state.fragment_offset.unwrap_or(gst_sys::GST_BUFFER_OFFSET_NONE));
+                                                    buffer_ref.set_offset_end(state.fragment_offset_end.unwrap_or(gst_sys::GST_BUFFER_OFFSET_NONE));
+                                                    buffer_ref.set_flags(gst::BufferFlags::HEADER);
+                                                    let mut buffer_map = buffer_ref.map_writable().unwrap();
+                                                    let slice = buffer_map.as_mut_slice();
+                                                    let mut pos = 0;
+                                                    slice[pos..pos+ftype_atom.len()].copy_from_slice(&ftype_atom.atom_bytes);
+                                                    pos += ftype_atom.len();
+                                                    slice[pos..pos+moov_atom.len()].copy_from_slice(&moov_atom.atom_bytes);
+                                                    pos += moov_atom.len();
+                                                    assert_eq!(pos, output_buf_len);
+                                                };
+
+                                                // Create the catalog track with a single segment.
+		                                        let mut init_track = state.broadcast.clone().create_track("0.mp4").map_err(|_| gst::FlowError::Error)?;
+		                                        let init_segment = init_track.create_segment(segment::Info {
+		                                        	sequence: VarInt::ZERO,
+		                                        	priority: 0,
+		                                        	expires: None,
+		                                        }).map_err(|_| gst::FlowError::Error)?;
+
+                                                // Create a single fragment, optionally setting the size
+		                                        let mut init_fragment = init_segment.final_fragment(VarInt::ZERO).map_err(|_| gst::FlowError::Error)?;
+
+                                                let buffer_map = gst_buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+
+                                                // Create a a Vec<u8> object from the data slice
+                                                let bytes = buffer_map.as_slice().to_vec();
+
+                                                init_fragment.chunk(bytes.into()).map_err(|_| gst::FlowError::Error)?;
+
+                                                // We're going to parse the moov box.
+		                                        // We have to read the moov box header to correctly advance the cursor for the mp4 crate.
+		                                        let mut moov_reader = Cursor::new(moov_atom.atom_bytes.clone());
+		                                        let moov_header = mp4::BoxHeader::read(&mut moov_reader).map_err(|_| gst::FlowError::Error)?;
+
+                                                // Parse the moov box so we can detect the timescales for each track.
+		                                        let moov = mp4::MoovBox::read_box(&mut moov_reader, moov_header.size).map_err(|_| gst::FlowError::Error)?;
+
+                                                let mut tracks = HashMap::new();
+
+                                                for trak in &moov.traks {
+                                                    let id = trak.tkhd.track_id;
+                                                    let name = format!("{}.m4s", id);
+                                        
+                                                    let timescale = track_timescale(&moov, id);
+                                        
+                                                    // Store the track publisher in a map so we can update it later.
+                                                    let track = broadcast.create_track(&name).map_err(|_| gst::FlowError::Error)?;
+                                                    let track = Track::new(track, timescale);
+                                                    tracks.insert(id, track);
+                                                }
+
+                                            }
+                                            _ => {
+                                                log::warn!("Received moov without ftype");
+                                            },
+                                        }
+                                    },
+                                    ATOM_TYPE_MOOF => {
+                                        state.moof_atom = Some(atom);
+                                        log::info!("moof_atom={:?}", state.moof_atom);
+                                    },
+                                    ATOM_TYPE_MDAT => {
+                                        let mdat_atom = atom;
+                                        match (state.ftype_atom.as_ref(), state.moov_atom.as_ref(), state.moof_atom.as_ref()) {
+                                            (Some(ftype_atom), Some(moov_atom), Some(moof_atom)) => {
+                                                let include_header = !state.fragment_buffer_flags.contains(gst::BufferFlags::DELTA_UNIT);
+                                                let header_len = if include_header {
+                                                    ftype_atom.len() + moov_atom.len()
+                                                } else {
+                                                    0
+                                                };
+                                                let output_buf_len = header_len + moof_atom.len() + mdat_atom.len();
+                                                log::info!("Pushing buffer; include_header={}, ftype.len={}, moov.len={}, moof.len={}, mdat.len={}",
+                                                    include_header, ftype_atom.len(), moov_atom.len(), moof_atom.len(), mdat_atom.len());
+                                                let mut gst_buffer = gst::Buffer::with_size(output_buf_len).unwrap();
+                                                {
+                                                    let buffer_ref = gst_buffer.get_mut().unwrap();
+                                                    buffer_ref.set_pts(state.fragment_pts);
+                                                    buffer_ref.set_dts(state.fragment_dts);
+
+                                                    let pts_plus_duration =state.fragment_max_pts_plus_duration.clone();
+                                                    let fragment_pts = state.fragment_pts.clone();
+
+                                                    let duration = match (pts_plus_duration, fragment_pts) {
+                                                        (Some(pts_plus_duration), Some(fragment_pts)) => {
+                                                            Some(pts_plus_duration - fragment_pts)
+                                                        }
+                                                        // Handle the case where one or both values are `None`
+                                                        _ => None,
+                                                    };                                                    buffer_ref.set_duration(duration);
+                                                    buffer_ref.set_offset(state.fragment_offset.unwrap_or(gst_sys::GST_BUFFER_OFFSET_NONE));
+                                                    buffer_ref.set_offset_end(state.fragment_offset_end.unwrap_or(gst_sys::GST_BUFFER_OFFSET_NONE));
+                                                    buffer_ref.set_flags(state.fragment_buffer_flags);
+                                                    let mut buffer_map = buffer_ref.map_writable().unwrap();
+                                                    let slice = buffer_map.as_mut_slice();
+                                                    let mut pos = 0;
+                                                    if include_header {
+                                                        slice[pos..pos+ftype_atom.len()].copy_from_slice(&ftype_atom.atom_bytes);
+                                                        pos += ftype_atom.len();
+                                                        slice[pos..pos+moov_atom.len()].copy_from_slice(&moov_atom.atom_bytes);
+                                                        pos += moov_atom.len();
+                                                    }
+                                                    slice[pos..pos+moof_atom.len()].copy_from_slice(&moof_atom.atom_bytes);
+                                                    pos += moof_atom.len();
+                                                    slice[pos..pos+mdat_atom.len()].copy_from_slice(&mdat_atom.atom_bytes);
+                                                    pos += mdat_atom.len();
+                                                    assert_eq!(pos, output_buf_len);
+                                                }
+                                                // Clear fragment variables.
+                                                state.fragment_pts = None;
+                                                state.fragment_dts = None;
+                                                state.fragment_max_pts_plus_duration = None;
+                                                state.fragment_offset = None;
+                                                state.fragment_offset_end = None;
+                                                state.fragment_buffer_flags = gst::BufferFlags::DELTA_UNIT;
+                                                // Push new buffer.
+                                                log::info!("Pushing buffer {:?}", gst_buffer);
+                                                // let _ = self.srcpad.push(gst_buffer)?;
+                                            },
+                                            _ => {
+                                                log::warn!("Received mdat without ftype, moov, or moof");
+                                            },
+                                        }
+                                    },
+                                    _ => {
+                                        log::warn!("Unknown atom type {:?}", atom);
+                                    },
+                                }
+                            },
+                            None => break,
+                        }
+                    };
 
                     Ok(gst::FlowSuccess::Ok)
                 })
@@ -266,33 +500,91 @@ impl GST {
 
         Ok(())
     }
+}
 
-    //TODO: turn this into a Segment Struct 
+struct Track {
+	// The track we're producing
+	track: track::Publisher,
 
-    async fn create_segment(state: Arc<Mutex<State>>) -> anyhow::Result<()> {
-        let mut state = state.lock().unwrap();
+	// The current segment
+	current: Option<fragment::Publisher>,
 
-        let mut init_track = state.broadcast.create_track("0.mp4")?;
+	// The number of units per second.
+	timescale: u64,
 
-        //TODO:
-        // let init_segment = {
-        //     let r = init_track.create_segment(segment::Info {
-        //         sequence: VarInt::ZERO,
-        //         priority: 0,
-        //         expires: None,
-        //     });
-            
-        //     match r {
-        //         Ok(x)=>x,
-        //         Err(e)=>log::error!("Cache error", e)
-        //     };
-        // };
+	// The number of segments produced.
+	sequence: u64,
+}
 
-        // // Create a single fragment, optionally setting the size
-		// let mut init_fragment = init_segment.final_fragment(VarInt::ZERO)?;
+impl Track {
+	fn new(track: track::Publisher, timescale: u64) -> Self {
+		Self {
+			track,
+			sequence: 0,
+			current: None,
+			timescale,
+		}
+	}
 
-		// init_fragment.chunk(init.into())?;
+	// pub fn header(&mut self, raw: Vec<u8>, fragment: Fragment) -> anyhow::Result<()> {
+	// 	if let Some(current) = self.current.as_mut() {
+	// 		if !fragment.keyframe {
+	// 			// Use the existing segment
+	// 			current.chunk(raw.into())?;
+	// 			return Ok(());
+	// 		}
+	// 	}
 
-        Ok(())
-    }
+	// 	// Otherwise make a new segment
+
+	// 	// Compute the timestamp in milliseconds.
+	// 	// Overflows after 583 million years, so we're fine.
+	// 	let timestamp: u32 = fragment
+	// 		.timestamp(self.timescale)
+	// 		.as_millis()
+	// 		.try_into()
+	// 		.context("timestamp too large")?;
+
+	// 	// Create a new segment.
+	// 	let segment = self.track.create_segment(segment::Info {
+	// 		sequence: VarInt::try_from(self.sequence).context("sequence too large")?,
+
+	// 		// Newer segments are higher priority
+	// 		priority: u32::MAX.checked_sub(timestamp).context("priority too large")?,
+
+	// 		// Delete segments after 10s.
+	// 		expires: Some(time::Duration::from_secs(10)),
+	// 	})?;
+
+	// 	// Create a single fragment for the segment that we will keep appending.
+	// 	let mut fragment = segment.final_fragment(VarInt::ZERO)?;
+
+	// 	self.sequence += 1;
+
+	// 	// Insert the raw atom into the segment.
+	// 	fragment.chunk(raw.into())?;
+
+	// 	// Save for the next iteration
+	// 	self.current = Some(fragment);
+
+	// 	Ok(())
+	// }
+
+	// pub fn data(&mut self, raw: Vec<u8>) -> anyhow::Result<()> {
+	// 	let fragment = self.current.as_mut().context("missing current fragment")?;
+	// 	fragment.chunk(raw.into())?;
+
+	// 	Ok(())
+	// }
+}
+
+// Find the timescale for the given track.
+fn track_timescale(moov: &mp4::MoovBox, track_id: u32) -> u64 {
+	let trak = moov
+		.traks
+		.iter()
+		.find(|trak| trak.tkhd.track_id == track_id)
+		.expect("failed to find trak");
+
+	trak.mdia.mdhd.timescale as u64
 }

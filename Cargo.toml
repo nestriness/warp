@@ -11,6 +11,7 @@ gst-app = { package = "gstreamer-app", git = "https://gitlab.freedesktop.org/gst
 gst-plugin-fmp4 = { git = "https://github.com/sdroege/gst-plugin-rs", version = "0.12.0-alpha.1" }
 gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_18"] }
 gst-pbutils = { package = "gstreamer-pbutils", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
+gst-sys = { package = "gstreamer-sys", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
 toml_datetime = "0.6.5"
 url = "2.5.0"
 
@@ -25,4 +26,5 @@ log = { version = "0.4", features = ["std"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = { version = "1", features = ["backtrace"] }
+mp4 = "0.13"
 moq-transport = { git = "https://github.com/kixelated/moq-rs", version = "0.2.0" }
