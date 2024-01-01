@@ -428,7 +428,8 @@ impl GST {
                                                         
                                         // Save the track ID for the next iteration, which must be a mdat.
                                         if current.clone().is_none(){
-                                            log::info!("multiple moof atoms")
+                                            log::error!("multiple moof atoms");
+                                            return Err(gst::FlowError::Error);
                                         }
 
                                         current.replace(fragment.track);
