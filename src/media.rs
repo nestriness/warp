@@ -3,7 +3,6 @@ use gst::prelude::*;
 use gst::ClockTime;
 
 use std::sync::{Arc, Mutex};
-use url::Url;
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
 use moq_transport::VarInt;
