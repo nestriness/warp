@@ -81,9 +81,6 @@ impl Mp4Parser {
 }
 
 struct State {
-    // We hold on to publisher so we don't close then while media is still being published.
-    broadcast: broadcast::Publisher,
-
     // Atoms in init sequence that must be repeated at each key frame.
     ftype_atom: Option<Mp4Atom>,
     moov_atom: Option<Mp4Atom>,
@@ -109,6 +106,14 @@ struct State {
     wave: String,
     video_enc: Option<String>,
     mp4_parser: Mp4Parser,
+
+    // We hold on to publisher so we don't close then while media is still being published.
+    broadcast: broadcast::Publisher,
+    catalog: Option<track::Publisher>,
+	init: Option<track::Publisher>,
+
+	// Tracks based on their track ID.
+	tracks: Option<HashMap<u32, Track>>,
 }
 
 pub struct GST {}
@@ -141,6 +146,11 @@ impl GST {
             broadcast: broadcast.to_owned(),
             mp4_parser: Mp4Parser::new(),
             video_enc: None,
+            catalog: None,
+	        init: None,
+
+	        // Tracks based on their track ID.
+	        tracks: None,
         }));
 
         let mut state_lock = state.lock().unwrap();
@@ -300,6 +310,7 @@ impl GST {
 
                     loop {
                         let mut state = state.lock().unwrap();
+                        let mut current = None;
 
                         match state.mp4_parser.pop_atom() {
                             Some(atom) => {
@@ -393,6 +404,9 @@ impl GST {
 		                                        // Create the catalog track
 		                                        Self::serve_catalog(&mut catalog, &init_track.name, &moov).map_err(|_| gst::FlowError::Error)?;
 
+                                               state.tracks = Some(tracks);
+                                               state.init = Some(init_track);
+                                               state.catalog = Some(catalog);
                                             }
                                             _ => {
                                                 log::warn!("Received moov without ftype");
@@ -400,8 +414,35 @@ impl GST {
                                         }
                                     },
                                     ATOM_TYPE_MOOF => {
-                                        state.moof_atom = Some(atom);
                                         log::info!("moof_atom={:?}", state.moof_atom);
+
+                                        let tracks = if let Some(tracks) = &mut state.tracks {
+                                            tracks
+                                        } else {
+                                            log::warn!("Tracks are not set up yet");
+                                            return Err(gst::FlowError::Error);
+                                        };
+
+                                        let mut reader = Cursor::new(atom.atom_bytes.clone());
+                                        let header = mp4::BoxHeader::read(&mut reader).map_err(|_| gst::FlowError::Error)?;
+                                        let moof = mp4::MoofBox::read_box(&mut reader, header.size).map_err(|_| gst::FlowError::Error)?;
+
+                                        // Process the moof.
+                                        let fragment = Fragment::new(moof).map_err(|_| gst::FlowError::Error)?;
+                                                        
+                                        // Get the track for this moof.
+                                        let track = tracks.get_mut(&fragment.track).context("failed to find track").map_err(|_| gst::FlowError::Error)?;
+                                                        
+                                        // Save the track ID for the next iteration, which must be a mdat.
+                                        if current.is_none(){
+                                            log::info!("multiple moof atoms")
+                                        }
+                                        current.replace(fragment.track);
+                                        // Publish the moof header, creating a new segment if it's a keyframe.
+					                    track.header(atom.atom_bytes.clone(), fragment).context("failed to publish moof").map_err(|_| gst::FlowError::Error)?;
+                                            
+                                        state.moof_atom = Some(atom);
+
                                     },
                                     ATOM_TYPE_MDAT => {
                                         let mdat_atom = atom;
