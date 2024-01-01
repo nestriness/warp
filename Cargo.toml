@@ -28,3 +28,5 @@ tracing-subscriber = "0.3"
 anyhow = { version = "1", features = ["backtrace"] }
 mp4 = "0.13"
 moq-transport = { git = "https://github.com/kixelated/moq-rs", version = "0.2.0" }
+serde_json = "1"
+rfc6381-codec = "0.1"
