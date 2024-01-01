@@ -118,7 +118,7 @@ impl GST {
     pub async fn run(mut broadcast: broadcast::Publisher) -> anyhow::Result<()> {
         gst::init()?;
 
-        //FIXME: Get this value from commandline argument
+        //FIXME: add audio pipeline
 
         gstfmp4::plugin_register_static()?;
 
