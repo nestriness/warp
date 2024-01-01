@@ -97,12 +97,10 @@ struct State {
     fragment_offset_end: Option<u64>,
     fragment_buffer_flags: gst::BufferFlags,
 
-    url: Option<Url>,
     bitrate: u64,
     width: u64,
     height: u64,
-    wave: String,
-    video_enc: Option<String>,
+    // wave: String,
     mp4_parser: Mp4Parser,
 
     // We hold on to publisher so we don't close then while media is still being published.
@@ -118,7 +116,7 @@ struct State {
 pub struct GST {}
 
 impl GST {
-    pub async fn run(url: Url, mut broadcast: broadcast::Publisher) -> anyhow::Result<()> {
+    pub async fn run(mut broadcast: broadcast::Publisher) -> anyhow::Result<()> {
         gst::init()?;
 
         //FIXME: Get this value from commandline argument
@@ -136,14 +134,12 @@ impl GST {
             fragment_offset: None,
             fragment_offset_end: None,
             fragment_buffer_flags: gst::BufferFlags::DELTA_UNIT,
-            url: Some(url),
             bitrate: 2_048_000,
             width: 1280,
             height: 720,
-            wave: "sine".to_string(),
             broadcast: broadcast.to_owned(),
             mp4_parser: Mp4Parser::new(),
-            video_enc: None,
+            // wave: "sine".to_string(),
             catalog: None,
 	        init: None,
 
@@ -152,7 +148,7 @@ impl GST {
             current: None,
         }));
 
-        let mut state_lock = state.lock().unwrap();
+        let state_lock = state.lock().unwrap();
 
         let video_src = gst::ElementFactory::make("videotestsrc")
             .property("is-live", true)
@@ -225,10 +221,6 @@ impl GST {
             &mux,
             appsink.upcast_ref(),
         ])?;
-
-        // let video_encoder = probe_encoder(video_enc);
-
-        // state_lock.video_enc = Some(video_encoder);
 
         //drop the choke hold here
         drop(state_lock);

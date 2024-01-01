@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::select! {
         res = session.run() => res.context("session error")?,
-        res = media::GST::run(url, publisher) => res.context("media error")?,
+        res = GST::run(publisher) => res.context("media error")?,
     }
 
     Ok(())
