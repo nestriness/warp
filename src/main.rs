@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
         quinn::Endpoint::client(config.bind)?;
     endpoint.set_default_client_config(quinn_client_config);
 
-    log::info!("connecting to relay: url={}", config.url);
+    println!("connecting to relay: url={}", config.url);
 
     let session = webtransport_quinn::connect(&endpoint, &config.url)
         .await
