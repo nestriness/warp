@@ -5,6 +5,8 @@
 use anyhow::{self, Context};
 use gst::prelude::*;
 use gst::ClockTime;
+//FIXME: find out why ``buffer.length`` is longer than ``atom_size`` and how to work with that
+//TODO: continue with the "other" atoms
 
 use std::sync::{Arc, Mutex};
 
