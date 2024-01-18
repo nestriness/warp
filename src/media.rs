@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #![allow(unused_mut)]
 #![allow(unused_assignments)]
+#![allow(unused_variables)]
 use anyhow::{self, Context};
 use gst::prelude::*;
 use gst::ClockTime;
@@ -132,38 +133,39 @@ impl GST {
         //FIXME: add audio pipeline
 
         gstfmp4::plugin_register_static()?;
+        gstmp4::plugin_register_static().unwrap();
 
-        let pipeline = gst::Pipeline::default();
+        // let pipeline = gst::Pipeline::default();
 
-        let state = Arc::new(Mutex::new(State {
-            ftype_atom: None,
-            moov_atom: None,
-            fragment_pts: None,
-            fragment_dts: None,
-            fragment_max_pts_plus_duration: None,
-            fragment_offset: None,
-            fragment_offset_end: None,
-            fragment_buffer_flags: gst::BufferFlags::DELTA_UNIT,
-            bitrate: 2_048_000,
-            width: 1280,
-            height: 720,
-            broadcast: broadcast.to_owned(),
-            mp4_parser: Mp4Parser::new(),
-            // wave: "sine".to_string(),
-            catalog: None,
-            init: None,
+        // let state = Arc::new(Mutex::new(State {
+        //     ftype_atom: None,
+        //     moov_atom: None,
+        //     fragment_pts: None,
+        //     fragment_dts: None,
+        //     fragment_max_pts_plus_duration: None,
+        //     fragment_offset: None,
+        //     fragment_offset_end: None,
+        //     fragment_buffer_flags: gst::BufferFlags::DELTA_UNIT,
+        //     bitrate: 2_048_000,
+        //     width: 1280,
+        //     height: 720,
+        //     broadcast: broadcast.to_owned(),
+        //     mp4_parser: Mp4Parser::new(),
+        //     // wave: "sine".to_string(),
+        //     catalog: None,
+        //     init: None,
 
-            // Tracks based on their track ID.
-            tracks: None,
-            current: None,
-        }));
+        //     // Tracks based on their track ID.
+        //     tracks: None,
+        //     current: None,
+        // }));
 
-        let state_lock = state.lock().unwrap();
+        // let state_lock = state.lock().unwrap();
 
-        let video_src = gst::ElementFactory::make("videotestsrc")
-            .property("is-live", true)
-            .property("num-buffers", 360i32)
-            .build()?;
+        // let video_src = gst::ElementFactory::make("v4l2src")
+        //     // .property("is-live", true)
+        //     .property("num-buffers", 500i32)
+        //     .build()?;
 
         // let raw_capsfilter = gst::ElementFactory::make("capsfilter")
         //     .property(
@@ -177,168 +179,221 @@ impl GST {
         //     )
         //     .build()?;
 
-        // let timeoverlay = gst::ElementFactory::make("timeoverlay").build()?;
+        // // let timeoverlay = gst::ElementFactory::make("timeoverlay").build()?;
 
         // let videoconvert = gst::ElementFactory::make("videoconvert").build()?;
 
-        let video_enc = gst::ElementFactory::make("x264enc")
-            // .property("bframes", 0u32)
-            .property("key-int-max", 60u32)
-            .property("bitrate", state_lock.bitrate as u32 / 1000u32)
-            .property_from_str("tune", "zerolatency")
-            .build()?;
+        // // let video_enc = gst::ElementFactory::make("x264enc")
+        // //     // .property("bframes", 0u32)
+        // //     .property("key-int-max", 60u32)
+        // //     .property("bitrate", state_lock.bitrate as u32 / 1000u32)
+        // //     .property_from_str("tune", "zerolatency")
+        // //     .build()?;
 
-        // let h264_capsfilter = gst::ElementFactory::make("capsfilter")
-        //     .property(
-        //         "caps",
-        //         gst::Caps::builder("video/x-h264")
-        //             .field("profile", "main")
-        //             .build(),
-        //     )
-        //     .build()?;
+        // // let h264_capsfilter = gst::ElementFactory::make("capsfilter")
+        // //     .property(
+        // //         "caps",
+        // //         gst::Caps::builder("video/x-h264")
+        // //             .field("profile", "main")
+        // //             .build(),
+        // //     )
+        // //     .build()?;
 
-        // let audio_src = gst::ElementFactory::make("audiotestsrc")
-        //     .property("is-live", true)
-        //     .property_from_str("wave", &state.wave)
-        //     .build()?;
+        // // let audio_src = gst::ElementFactory::make("audiotestsrc")
+        // //     .property("is-live", true)
+        // //     .property_from_str("wave", &state.wave)
+        // //     .build()?;
 
-        // let audio_enc = gst::ElementFactory::make("avenc_aac").build()?;
+        // // let audio_enc = gst::ElementFactory::make("avenc_aac").build()?;
 
-        let mux = gst::ElementFactory::make("cmafmux")
-            .property_from_str("header-update-mode", "update")
-            .property("write-mehd", true)
-            .property("fragment-duration", 1.mseconds())
-            .build()?;
-        
-        // let mux = gst::ElementFactory::make("mp4mux")
+        // // let mux = gst::ElementFactory::make("cmafmux")
+        // //     .property_from_str("header-update-mode", "update")
+        // //     .property("write-mehd", false)
+        // //     .property("fragment-duration", 1.mseconds())
+        // //     .build()?;
+
+        // let mux = gst::ElementFactory::make("qtmux")
         //     .property_from_str("streamable", "true")
-        //     .property("fragment-duration", 1u32 )
+        //     // .property("fragment-duration", 1u32 )
         //     .build()?;
 
-        let appsink = gst_app::AppSink::builder().buffer_list(true).build();
+        // let appsink = gst_app::AppSink::builder().buffer_list(true).build();
 
-        pipeline.add_many([
-            &video_src,
-            // &raw_capsfilter,
-            // &timeoverlay,
-            // &videoconvert,
-            &video_enc,
-            // &h264_capsfilter,
-            // &audio_src,
-            // &audio_enc,
-            &mux,
-            appsink.upcast_ref(),
-        ])?;
+        // pipeline.add_many([
+        //     &video_src,
+        //     &raw_capsfilter,
+        //     // &timeoverlay,
+        //     &videoconvert,
+        //     // &video_enc,
+        //     // &h264_capsfilter,
+        //     // &audio_src,
+        //     // &audio_enc,
+        //     &mux,
+        //     appsink.upcast_ref(),
+        // ])?;
 
-        gst::Element::link_many([
-            &video_src,
-            // &raw_capsfilter,
-            // &timeoverlay,
-            // &videoconvert,
-            &video_enc, 
-            // &h264_capsfilter,
-            // &audio_src,
-            // &audio_enc,
-            &mux,
-            appsink.upcast_ref(),
-        ])?;
+        // gst::Element::link_many([
+        //     &video_src,
+        //     &raw_capsfilter,
+        //     // &timeoverlay,
+        //     &videoconvert,
+        //     // &video_enc,
+        //     // &h264_capsfilter,
+        //     // &audio_src,
+        //     // &audio_enc,
+        //     &mux,
+        //     appsink.upcast_ref(),
+        // ])?;
 
         //drop the choke hold here
-        drop(state_lock);
+        // drop(state_lock);
+        // let pipeline = gst::parse::launch("videotestsrc num-buffers=2500 ! timecodestamper ! video/x-raw,format=I420,width=1280,height=720,framerate=30/1 ! timeoverlay ! x264enc bframes=0 bitrate=2048 ! video/x-h264,profile=main ! cmafmux fragment-duration=1 header-update-mode=update write-mehd=true ! appsink name=sink").unwrap().downcast::<gst::Pipeline>().unwrap();
+        // let pipeline = gst::parse::launch("videotestsrc num-buffers=2500 ! x264enc ! isomp4mux ! appsink name=sink").unwrap().downcast::<gst::Pipeline>().unwrap();
+        let pipeline = gst::parse::launch(
+            "videotestsrc num-buffers=99 ! x264enc ! mux. \
+             audiotestsrc num-buffers=140 ! avenc_aac ! mux. \
+             isomp4mux name=mux ! filesink location=test.mp4 name=sink \
+        ",
+        ).unwrap().downcast::<gst::Pipeline>().unwrap();
 
-        appsink.set_callbacks(
-            gst_app::AppSinkCallbacks::builder()
-                .new_sample(move |sink| {
-                    let sample = sink
-                        .pull_sample()
-                        .with_context(|| "Error pulling sample")
-                        .map_err(|e| {
-                            eprintln!("{:?}", e);
-                            gst::FlowError::Eos
-                        })?;
-                    // The muxer only outputs non-empty buffer lists
-                    let mut buffer_list = sample.buffer_list_owned().expect("no buffer list");
+        // let appsink = pipeline
+        //     .by_name("sink")
+        //     .unwrap()
+        //     .dynamic_cast::<gst_app::AppSink>()
+        //     .unwrap();
 
-                    println!("buffer is empty {:?}", buffer_list.is_empty());
-                    assert!(!buffer_list.is_empty());
+        // appsink.set_buffer_list(true);
 
-                    println!("bufferlist is this long {:?}", buffer_list.len());
-                    let mut first = buffer_list.get(0).unwrap();
+        // appsink.set_callbacks(
+        //     gst_app::AppSinkCallbacks::builder()
+        //         .new_sample(move |sink| {
+        //             let sample = sink
+        //                 .pull_sample()
+        //                 .with_context(|| "Error pulling sample")
+        //                 .map_err(|e| {
+        //                     eprintln!("{:?}", e);
+        //                     gst::FlowError::Eos
+        //                 })?;
+        //             // The muxer only outputs non-empty buffer lists
+        //             let mut buffer_list = sample.buffer_list_owned().expect("no buffer list");
 
-                    // Each list contains a full segment, i.e. does not start with a DELTA_UNIT
-                    println!(
-                        "first buffer has a delta unit {:?}",
-                        first.flags().contains(gst::BufferFlags::DELTA_UNIT)
-                    );
-                    assert!(!first.flags().contains(gst::BufferFlags::DELTA_UNIT));
+        //             println!("buffer is empty {:?}", buffer_list.is_empty());
+        //             assert!(!buffer_list.is_empty());
 
-                    let mut state = state.lock().unwrap();
+        //             println!("bufferlist is this long {:?}", buffer_list.len());
+        //             let mut first = buffer_list.get(0).unwrap();
 
-                    //FIXME: The mp4_parser fails because we are parsing too many mp4_atoms in parallel, so let us do it sequentially.
+        //             // Each list contains a full segment, i.e. does not start with a DELTA_UNIT
+        //             println!(
+        //                 "first buffer has a delta unit {:?}",
+        //                 first.flags().contains(gst::BufferFlags::DELTA_UNIT)
+        //             );
+        //             assert!(!first.flags().contains(gst::BufferFlags::DELTA_UNIT));
 
-                    // If the buffer has the DISCONT and HEADER flag set then it contains the media
-                    // header, i.e. the `ftyp`, `moov` and other media boxes.
-                    //
-                    // This might be the initial header or the updated header at the end of the stream.
-                    if first
-                        .flags()
-                        .contains(gst::BufferFlags::DISCONT | gst::BufferFlags::HEADER)
-                    {
-                        println!("writing header");
-                        let map = first
-                            .map_readable()
-                            .with_context(|| "Error mapping buffer to readable")
-                            .map_err(|e| {
-                                eprintln!("{:?}", e);
+        //             // let mut state = state.lock().unwrap();
 
-                                gst::FlowError::Error
-                            })?;
+        //             // let mut mp4_parser = Mp4Parser::new();
 
-                        state.mp4_parser.add(map.as_ref());
-                        loop {
-                            match state.mp4_parser.pop_atom() {
-                                Some(atom) => {
-                                    println!(
-                                        "atom_size={}, atom_type={}",
-                                        atom.len(),
-                                        atom.atom_type
-                                    );
-                                    match atom.atom_type {
-                                        ATOM_TYPE_FTYPE => {
-                                            println!("FTYP");
-                                        },
-                                        ATOM_TYPE_MOOV => {
-                                            println!("MOOV");
-                                        },
-                                        ATOM_TYPE_MOOF => {
-                                            println!("MOOF");
-                                        },
-                                        ATOM_TYPE_MDAT => {
-                                            println!("MDAT");
-                                        },
-                                        _ => {
-                                            log::warn!("Unknown atom type {:?}", atom);
-                                            println!("Unknown atom type {:?}", atom);
-                                        }
-                                    }
-                                },
-                                None => break,
-                            }
-                        }
-                        drop(map);
+        //             //FIXME: The mp4_parser fails because we are parsing too many mp4_atoms in parallel, so let us do it sequentially.
 
-                        // Remove the header from the buffer list
-                        buffer_list.make_mut().remove(0, 1);
+        //             // If the buffer has the DISCONT and HEADER flag set then it contains the media
+        //             // header, i.e. the `ftyp`, `moov` and other media boxes.
+        //             //
+        //             // This might be the initial header or the updated header at the end of the stream.
+        //             if first
+        //                 .flags()
+        //                 .contains(gst::BufferFlags::DISCONT | gst::BufferFlags::HEADER)
+        //             {
+        //                 println!("writing header");
+        //                 let map = first
+        //                     .map_readable()
+        //                     .with_context(|| "Error mapping buffer to readable")
+        //                     .map_err(|e| {
+        //                         eprintln!("{:?}", e);
 
-                        // If the list is now empty then it only contained the media header and nothing
-                        // else.
-                        if buffer_list.is_empty() {
-                            return Ok(gst::FlowSuccess::Ok);
-                        }
+        //                         gst::FlowError::Error
+        //                     })?;
+        //                 // Create a a Vec<u8> object from the data slice
+        //                 let bytes = map.as_slice().to_vec();
 
-                        // Otherwise get the next buffer and continue working with that.
-                        first = buffer_list.get(0).unwrap();
-                    }
+        //                 // We're going to parse the moov box.
+        //                 // We have to read the moov box header to correctly advance the cursor for the mp4 crate.
+        //                 let mut moov_reader = Cursor::new(bytes.clone());
+        //                 let header = mp4::BoxHeader::read(&mut moov_reader)
+        //                     .map_err(|_| gst::FlowError::Error)?;
+
+        //                 match header.name {
+        //                     mp4::BoxType::MoofBox => {
+        //                         println!("Moof")
+        //                     }
+        //                     mp4::BoxType::MdatBox => {
+        //                         println!("Mdat")
+        //                     }
+        //                     mp4::BoxType::MoovBox => {
+        //                         println!("Moov")
+        //                     }
+        //                     mp4::BoxType::FtypBox => {
+        //                         println!("Ftyp")
+        //                     }
+        //                     _ => {
+        //                         // Skip unknown atoms
+        //                     }
+        //                 }
+
+        //                 drop(map);
+
+        //                 // Remove the header from the buffer list
+        //                 buffer_list.make_mut().remove(0, 1);
+
+        //                 // If the list is now empty then it only contained the media header and nothing
+        //                 // else.
+        //                 if buffer_list.is_empty() {
+        //                     return Ok(gst::FlowSuccess::Ok);
+        //                 }
+
+        //                 // Otherwise get the next buffer and continue working with that.
+        //                 first = buffer_list.get(0).unwrap();
+        //             }
+
+        //             let map = first
+        //                 .map_readable()
+        //                 .with_context(|| "Error mapping buffer to readable")
+        //                 .map_err(|e| {
+        //                     eprintln!("{:?}", e);
+
+        //                     gst::FlowError::Error
+        //                 })?;
+        //             // Create a a Vec<u8> object from the data slice
+        //             let bytes = map.as_slice().to_vec();
+
+        //             // We're going to parse the moov box.
+        //             // We have to read the moov box header to correctly advance the cursor for the mp4 crate.
+        //             let mut moov_reader = Cursor::new(bytes.clone());
+        //             let header = mp4::BoxHeader::read(&mut moov_reader)
+        //                 .map_err(|_| gst::FlowError::Error)?;
+
+        //             match header.name {
+        //                 mp4::BoxType::MoofBox => {
+        //                     println!("Moof")
+        //                 }
+        //                 mp4::BoxType::MdatBox => {
+        //                     println!("Mdat")
+        //                 }
+        //                 mp4::BoxType::MoovBox => {
+        //                     println!("Moov")
+        //                 }
+        //                 mp4::BoxType::FtypBox => {
+        //                     println!("Ftyp")
+        //                 }
+        //                 _ => {
+        //                     // Skip unknown atoms
+        //                     println!("Unknown atom")
+        //                 }
+        //             }
+
+                    // If the buffer only has the HEADER flag set then this is a segment header that is
+                    // followed by one or more actual media buffers.
+                    // assert!(first.flags().contains(gst::BufferFlags::HEADER));
 
                     // for buffer in &*buffer_list {
                     // let map = buffer
@@ -658,13 +713,13 @@ impl GST {
                     //     }
                     // }
 
-                    Ok(gst::FlowSuccess::Ok)
-                })
-                .eos(move |_sink| {
-                    unreachable!();
-                })
-                .build(),
-        );
+        //             Ok(gst::FlowSuccess::Ok)
+        //         })
+        //         .eos(move |_sink| {
+        //             unreachable!();
+        //         })
+        //         .build(),
+        // );
 
         pipeline.set_state(gst::State::Playing)?;
 
