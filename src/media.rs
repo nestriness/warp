@@ -6,8 +6,6 @@
 use anyhow::{self, Context};
 use gst::prelude::*;
 use gst::ClockTime;
-//FIXME: find out why ``buffer.length`` is longer than ``atom_size`` and how to work with that
-//TODO: continue with the "other" atoms
 
 use std::sync::{Arc, Mutex};
 
@@ -255,6 +253,8 @@ impl GST {
              isomp4mux name=mux ! filesink location=test.mp4 name=sink \
         ",
         ).unwrap().downcast::<gst::Pipeline>().unwrap();
+
+        //TODO: Create a sink that is "seekable", probably with a really good EOS https://github.com/sdroege/gst-plugin-rs/blob/80b58f3b45d2c3adee5684888937a3aa30e30cd7/mux/mp4/src/mp4mux/imp.rs#L1252
 
         // let appsink = pipeline
         //     .by_name("sink")
