@@ -272,7 +272,7 @@ impl GST {
 
         // Set up a pad probe on the sink pad to intercept queries
         let sink_pad = appsink.static_pad("sink").unwrap();
-        
+
         //FIX: https://github.com/sdroege/gst-plugin-rs/blob/95c007953c0874bc46152078775d673cf44cc255/mux/mp4/src/mp4mux/imp.rs#L1243
         sink_pad.add_probe(gst::PadProbeType::QUERY_DOWNSTREAM, move |_pad, info| {
             let Some(query) = info.query_mut() else {
@@ -296,14 +296,14 @@ impl GST {
                             // For other formats, do not handle the seeking query
                             q.set(
                                 false,
-                                0.bytes(),
+                                gst::GenericFormattedValue::none_for_format(format),
                                 gst::GenericFormattedValue::none_for_format(format),
                             );
                         }
                     }
                 }
                 _ => {
-                    unreachable!();
+                    unreachable!("query seeking");
                 }
             }
             gst::PadProbeReturn::Pass
