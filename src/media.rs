@@ -270,62 +270,41 @@ impl GST {
         // Set the `emit-signals` property to `true` to receive signals
         appsink.set_property("emit-signals", &true);
 
-        // Set up a callback for the `new-sample` signal
-        // appsink.connect_new_sample(move |sink| {
-        //     // Handle the new sample
-        //     let sample = sink.pull_sample().map_err(|_| gst::FlowError::Error)?;
-        //     let buffer = sample.buffer().ok_or_else(|| gst::FlowError::Error)?;
-        //     let _map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-
-        //     // Perform any necessary operations on the buffer data
-
-        //     // Return Ok to indicate successful handling of the new sample
-        //     Ok(gst::FlowSuccess::Ok)
-        // });
-
         // Set up a pad probe on the sink pad to intercept queries
         let sink_pad = appsink.static_pad("sink").unwrap();
-        sink_pad.add_probe(gst::PadProbeType::QUERY_DOWNSTREAM, |pad, info| {
-            if let Some(ref query) = info.query_mut() {
-                //https://github.com/Kurento/gstreamer/blob/f2553fb153edeeecc2f4f74fca996c74dc8210df/plugins/elements/gstfilesink.c#L496C51-L496C69
-                use gst::QueryViewMut;
-
-                match query.view_mut() {
-                    QueryViewMut::Seeking(q) => {
-                        // We don't support any seeking at all
-                        println!("Handling query {:?}", q);
-
-                        let format = q.format();
-                        if format == gst::Format::Bytes || format == gst::Format::Default {
+        
+        //FIX: https://github.com/sdroege/gst-plugin-rs/blob/95c007953c0874bc46152078775d673cf44cc255/mux/mp4/src/mp4mux/imp.rs#L1243
+        sink_pad.add_probe(gst::PadProbeType::QUERY_DOWNSTREAM, move |_pad, info| {
+            let Some(query) = info.query_mut() else {
+                unreachable!();
+            };
+            match query.view_mut() {
+                gst::QueryViewMut::Seeking(q) => {
+                    println!("Handling query {:?}", q);
+                    let format = q.format();
+                    use gst::Format::Bytes;
+                    //https://github.com/Kurento/gstreamer/blob/f2553fb153edeeecc2f4f74fca996c74dc8210df/plugins/elements/gstfilesink.c#L494
+                    match format {
+                        gst::Format::Bytes | gst::Format::Default => {
                             q.set(
                                 true,
-                                gst::GenericFormattedValue::none_for_format(format),
+                                0.bytes(),
+                                gst::GenericFormattedValue::none_for_format(format), // No known end position, or you can specify it if known
+                            );
+                        }
+                        _ => {
+                            // For other formats, do not handle the seeking query
+                            q.set(
+                                false,
+                                0.bytes(),
                                 gst::GenericFormattedValue::none_for_format(format),
                             );
-                        } else {
-                            q.set(
-                            false,
-                            gst::GenericFormattedValue::none_for_format(format),
-                            gst::GenericFormattedValue::none_for_format(format),
-                        );
-
                         }
-                        
                     }
-                    _ => (),
                 }
-
-                // if let gst::QueryView::Seeking(mut seeking) = query.view() {
-                //     println!("Handling query {:?}", query);
-
-                //     if seeking.format() == gst::Format::Bytes || seeking.format() == gst::Format::Default {
-                //         seeking.to_owned().set(true, 0.bytes(), 1.bytes());
-                //         return gst::PadProbeReturn::Handled;
-                //     } else {
-                //         seeking.to_owned().set(false, 0.bytes(), 1.bytes());
-                //         return gst::PadProbeReturn::Handled;
-                //     }
-                // }
+                _ => {
+                    unreachable!();
+                }
             }
             gst::PadProbeReturn::Pass
         });
