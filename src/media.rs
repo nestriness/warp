@@ -291,6 +291,7 @@ impl GST {
                                 0.bytes(),
                                 gst::GenericFormattedValue::none_for_format(format), // No known end position, or you can specify it if known
                             );
+                            gst::PadProbeReturn::Handled
                         }
                         _ => {
                             // For other formats, do not handle the seeking query
@@ -299,14 +300,12 @@ impl GST {
                                 gst::GenericFormattedValue::none_for_format(format),
                                 gst::GenericFormattedValue::none_for_format(format),
                             );
+                            gst::PadProbeReturn::Handled
                         }
                     }
                 }
-                _ => {
-                    unreachable!("query seeking");
-                }
+                _ => gst::PadProbeReturn::Ok,
             }
-            gst::PadProbeReturn::Pass
         });
 
         // appsink.set_callbacks(
