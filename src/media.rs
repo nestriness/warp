@@ -7,6 +7,8 @@ use anyhow::{self, Context};
 use gst::prelude::*;
 use gst::ClockTime;
 use gst_app::glib;
+use gst_app::gst_base;
+use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 
@@ -15,7 +17,7 @@ use moq_transport::VarInt;
 use serde_json::json;
 use std::cmp::max;
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{Cursor, Seek};
 use std::time;
 
 use mp4::{self, ReadBox};
@@ -249,9 +251,7 @@ impl GST {
         )
         .unwrap()
         .downcast::<gst::Pipeline>()
-        .unwrap();
-
-        //TODO: Create a sink that is "seekable", probably with a really good EOS https://github.com/sdroege/gst-plugin-rs/blob/80b58f3b45d2c3adee5684888937a3aa30e30cd7/mux/mp4/src/mp4mux/imp.rs#L1252
+        .unwrap(); //interleave-time=1  movie-timescale=1
 
         let appsink = pipeline
             .by_name("sink")
@@ -324,8 +324,7 @@ impl GST {
 
                     assert!(!buffer_list.is_empty());
 
-                    let mut data = Vec::new();
-                    let mut mp4_parser = Mp4Parser::new();
+                    // let mut data = Vec::new();
 
                     for buffer in &*buffer_list {
                         let map = buffer
@@ -337,66 +336,89 @@ impl GST {
                                 gst::FlowError::Error
                             })?;
 
-                        data.extend_from_slice(map.as_slice());
-                        // mp4_parser.add(map.as_slice())
-                    }
+                        let mut cursor = Cursor::new(map.as_slice().to_vec());
 
-                    // loop {
-                    //     match mp4_parser.pop_atom() {
-                    //         Some(atom) => match atom.atom_type {
-                    //             ATOM_TYPE_FTYPE => {
-                    //                 println!("Atom Ftyp")
-                    //             }
-                    //             ATOM_TYPE_MOOV => {
-                    //                 println!("Atom Moov")
-                    //             }
-                    //             ATOM_TYPE_MOOF => {
-                    //                 println!("Atom Moof")
-                    //             }
-                    //             ATOM_TYPE_MDAT => {
-                    //                 println!("Atom Mdat")
-                    //             }
-                    //             _ => {
-                    //                 println!("Unknown atom type {:?}", atom.atom_type)
-                    //             }
-                    //         },
-                    //         None => break,
-                    //     }
-                    // }
-
-                    let cursor = Cursor::new(data.to_vec());
-                    // let mut reader = mp4::BoxHeader::read(&mut cursor.clone());
-
-                    while let Ok(header) = mp4::BoxHeader::read(&mut cursor.clone()) {
-                        match header.name {
-                            mp4::BoxType::MoofBox => {
-                                println!("Found 'moof' box");
-                                // Process 'moof' box
+                        // while let Ok(header) = mp4::BoxHeader::read(&mut cursor.clone()) {
+                        loop {
+                            let header = mp4::BoxHeader::read(&mut cursor.clone())
+                                .map_err(|_| gst::FlowError::Error)?;
+                            
+                            match header.name {
+                                mp4::BoxType::MoofBox => {
+                                    println!("Found 'moof' box");
+                                    // Process 'moof' box
+                                }
+                                mp4::BoxType::MdatBox => {
+                                    // println!("Found 'mdat' box");
+                                    // Process 'mdat' box
+                                }
+                                mp4::BoxType::EmsgBox => {
+                                    println!("Found 'emsg' box");
+                                    // Process 'mdat' box
+                                }
+                                mp4::BoxType::FreeBox => {
+                                    println!("Found 'free' box");
+                                    // Process 'mdat' box
+                                }
+                                mp4::BoxType::FtypBox => {
+                                    println!("Found 'ftyp' box");
+                                    // Process 'mdat' box
+                                }
+                                mp4::BoxType::MoovBox => {
+                                    println!("Found 'moov' box");
+                                    // Process 'mdat' box
+                                }
+                                // Handle other boxes if needed
+                                _ => {}
                             }
-                            mp4::BoxType::MdatBox => {
-                                println!("Found 'mdat' box");
-                                // Process 'mdat' box
-                            }
-                            mp4::BoxType::EmsgBox => {
-                                println!("Found 'emsg' box");
-                                // Process 'mdat' box
-                            } 
-                            mp4::BoxType::FreeBox => {
-                                println!("Found 'free' box");
-                                // Process 'mdat' box
-                            }
-                            mp4::BoxType::FtypBox => {
-                                println!("Found 'ftyp' box");
-                                // Process 'mdat' box
-                            }
-                            mp4::BoxType::MoovBox => {
-                                println!("Found 'moov' box");
-                                // Process 'mdat' box
-                            }
-                            // Handle other boxes if needed
-                            _ => {}
+                            cursor
+                                .seek(SeekFrom::Current(header.size as i64))
+                                // .map_err(|e| gst::FlowError::Eos)?;
+                                .expect("Seeking failed");
                         }
+
+                        // data.extend_from_slice(map.as_slice());
                     }
+
+                    // let mut cursor = Cursor::new(data.to_vec());
+
+                    // while let Ok(header) = mp4::BoxHeader::read(&mut cursor.clone()) {
+                    //     match header.name {
+                    //         mp4::BoxType::MoofBox => {
+                    //             println!("Found 'moof' box");
+                    //             // Process 'moof' box
+                    //         }
+                    //         mp4::BoxType::MdatBox => {
+                    //             // println!("Found 'mdat' box");
+                    //             // Process 'mdat' box
+                    //         }
+                    //         mp4::BoxType::EmsgBox => {
+                    //             println!("Found 'emsg' box");
+                    //             // Process 'mdat' box
+                    //         }
+                    //         mp4::BoxType::FreeBox => {
+                    //             println!("Found 'free' box");
+                    //             // Process 'mdat' box
+                    //         }
+                    //         mp4::BoxType::FtypBox => {
+                    //             println!("Found 'ftyp' box");
+                    //             // Process 'mdat' box
+                    //         }
+                    //         mp4::BoxType::MoovBox => {
+                    //             println!("Found 'moov' box");
+                    //             // Process 'mdat' box
+                    //         }
+                    //         // Handle other boxes if needed
+                    //         _ => {}
+                    //     }
+                    //     cursor
+                    //         .seek(SeekFrom::Current(header.size as i64))
+                    //         // .map_err(|e| gst::FlowError::Eos)?;
+                    //         .expect("Seeking failed");
+                    // }
+                    // Advance the cursor to skip the current box contents.
+                    // This positions the cursor right at the start of the next box.
+
                     // // Create a a Vec<u8> object from the data slice
                     // let bytes = map.as_slice().to_vec();
 
