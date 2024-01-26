@@ -8,6 +8,7 @@ use gst::prelude::*;
 use gst::ClockTime;
 use gst_app::glib;
 use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
 
 use moq_transport::cache::{broadcast, fragment, segment, track};
 use moq_transport::VarInt;
@@ -69,9 +70,6 @@ impl Mp4Parser {
                 let mut atom_bytes = Vec::with_capacity(atom_size);
                 // TODO: Swap vectors?
                 atom_bytes.extend_from_slice(&self.buf[0..atom_size]);
-
-                println!("self.buffer length in Mp4 parser {:?}", self.buf.len());
-                println!("atom size {:?}", atom_size);
                 // assert_eq!(self.buf.len(), atom_size);
                 self.buf.clear();
                 Some(Mp4Atom {
@@ -124,11 +122,7 @@ pub struct GST {}
 
 impl GST {
     pub async fn run(mut broadcast: broadcast::Publisher) -> anyhow::Result<()> {
-        println!("starting up GST.run");
-
         gst::init()?;
-
-        //FIXME: add audio pipeline
 
         gstfmp4::plugin_register_static()?;
         gstmp4::plugin_register_static().unwrap();
@@ -248,8 +242,8 @@ impl GST {
         // let pipeline = gst::parse::launch("videotestsrc num-buffers=2500 ! timecodestamper ! video/x-raw,format=I420,width=1280,height=720,framerate=30/1 ! timeoverlay ! x264enc bframes=0 bitrate=2048 ! video/x-h264,profile=main ! cmafmux fragment-duration=1 header-update-mode=update write-mehd=true ! appsink name=sink").unwrap().downcast::<gst::Pipeline>().unwrap();
         // let pipeline = gst::parse::launch("videotestsrc num-buffers=2500 ! x264enc ! isomp4mux ! appsink name=sink").unwrap().downcast::<gst::Pipeline>().unwrap();
         let pipeline = gst::parse::launch(
-            "videotestsrc num-buffers=99 ! x264enc ! mux. \
-             audiotestsrc num-buffers=140 ! avenc_aac ! mux. \
+            "videotestsrc num-buffers=60 ! video/x-raw,framerate=30/1 ! x264enc ! queue ! mux. \
+             audiotestsrc num-buffers=60 ! audio/x-raw,rate=48000 ! avenc_aac ! queue ! mux. \
              isomp4mux name=mux ! appsink name=sink \
         ",
         )
@@ -270,6 +264,10 @@ impl GST {
         // Set the `emit-signals` property to `true` to receive signals
         appsink.set_property("emit-signals", &true);
 
+        //Get the buffers as soon as they are available
+        appsink.set_property("max-buffers", &1u32);
+        appsink.set_property("sync", &false);
+
         // Set up a pad probe on the sink pad to intercept queries
         let sink_pad = appsink.static_pad("sink").unwrap();
 
@@ -280,7 +278,6 @@ impl GST {
             };
             match query.view_mut() {
                 gst::QueryViewMut::Seeking(q) => {
-                    println!("Handling query {:?}", q);
                     let format = q.format();
                     use gst::Format::Bytes;
                     //https://github.com/Kurento/gstreamer/blob/f2553fb153edeeecc2f4f74fca996c74dc8210df/plugins/elements/gstfilesink.c#L494
@@ -320,18 +317,119 @@ impl GST {
                     let sample = sink
                         .pull_sample()
                         .with_context(|| "Error pulling sample")
-                        .map_err(|e| {
-                            eprintln!("{:?}", e);
-                            gst::FlowError::Eos
-                        })?;
+                        .map_err(|e| gst::FlowError::Eos)?;
+
                     // The muxer only outputs non-empty buffer lists
                     let mut buffer_list = sample.buffer_list_owned().expect("no buffer list");
 
+                    assert!(!buffer_list.is_empty());
+
+                    let mut data = Vec::new();
+                    let mut mp4_parser = Mp4Parser::new();
+
                     for buffer in &*buffer_list {
-                        println!("Found buffer {:?}", buffer);
+                        let map = buffer
+                            .map_readable()
+                            .with_context(|| "Error mapping buffer to readable")
+                            .map_err(|e| {
+                                eprintln!("{:?}", e);
+
+                                gst::FlowError::Error
+                            })?;
+
+                        data.extend_from_slice(map.as_slice());
+                        // mp4_parser.add(map.as_slice())
                     }
 
+                    // loop {
+                    //     match mp4_parser.pop_atom() {
+                    //         Some(atom) => match atom.atom_type {
+                    //             ATOM_TYPE_FTYPE => {
+                    //                 println!("Atom Ftyp")
+                    //             }
+                    //             ATOM_TYPE_MOOV => {
+                    //                 println!("Atom Moov")
+                    //             }
+                    //             ATOM_TYPE_MOOF => {
+                    //                 println!("Atom Moof")
+                    //             }
+                    //             ATOM_TYPE_MDAT => {
+                    //                 println!("Atom Mdat")
+                    //             }
+                    //             _ => {
+                    //                 println!("Unknown atom type {:?}", atom.atom_type)
+                    //             }
+                    //         },
+                    //         None => break,
+                    //     }
+                    // }
+
+                    let cursor = Cursor::new(data.to_vec());
+                    // let mut reader = mp4::BoxHeader::read(&mut cursor.clone());
+
+                    while let Ok(header) = mp4::BoxHeader::read(&mut cursor.clone()) {
+                        match header.name {
+                            mp4::BoxType::MoofBox => {
+                                println!("Found 'moof' box");
+                                // Process 'moof' box
+                            }
+                            mp4::BoxType::MdatBox => {
+                                println!("Found 'mdat' box");
+                                // Process 'mdat' box
+                            }
+                            mp4::BoxType::EmsgBox => {
+                                println!("Found 'emsg' box");
+                                // Process 'mdat' box
+                            } 
+                            mp4::BoxType::FreeBox => {
+                                println!("Found 'free' box");
+                                // Process 'mdat' box
+                            }
+                            mp4::BoxType::FtypBox => {
+                                println!("Found 'ftyp' box");
+                                // Process 'mdat' box
+                            }
+                            mp4::BoxType::MoovBox => {
+                                println!("Found 'moov' box");
+                                // Process 'mdat' box
+                            }
+                            // Handle other boxes if needed
+                            _ => {}
+                        }
+                    }
+                    // // Create a a Vec<u8> object from the data slice
+                    // let bytes = map.as_slice().to_vec();
+
+                    // //                 // We're going to parse the moov box.
+                    // // We have to read the moov box header to correctly advance the cursor for the mp4 crate.
+                    // let mut moov_reader = Cursor::new(bytes.clone());
+                    // let header = mp4::BoxHeader::read(&mut moov_reader)
+                    //     .map_err(|_| gst::FlowError::Error)?;
+
+                    // match header.name {
+                    //     mp4::BoxType::MoofBox => {
+                    //         println!("Moof body")
+                    //     }
+                    //     mp4::BoxType::MdatBox => {
+                    //         println!("Mdat body")
+                    //     }
+                    //     mp4::BoxType::MoovBox => {
+                    //         println!("Moov body")
+                    //     }
+                    //     mp4::BoxType::FtypBox => {
+                    //         println!("Ftyp body")
+                    //     }
+                    //     _ => {
+                    //         // Skip unknown atoms
+                    //     }
+                    // }
+
                     Ok(gst::FlowSuccess::Ok)
+                })
+                .eos(move |_sink| {
+                    println!("End-of-stream reached.");
+
+                    unreachable!()
                 })
                 .build(),
         );

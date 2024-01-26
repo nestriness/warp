@@ -250,7 +250,7 @@ checksum = "531b97fb4cd3dfdce92c35dedbfdc1f0b9d8091c8ca943d6dae340ef5012d514"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -417,7 +417,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -658,7 +658,7 @@ checksum = "87750cf4b7a4c0625b1529e4c543c2182106e4dedc60a2a6455e00d212c489ac"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -711,7 +711,7 @@ checksum = "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253"
 [[package]]
 name = "gio-sys"
 version = "0.19.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core#5613c9d139aa8ad7f142be782c6c75f21f1880f2"
+source = "git+https://github.com/gtk-rs/gtk-rs-core#56a5549a7d5a28a20edd6ea1fcbd2f47a750cdd4"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -723,7 +723,7 @@ dependencies = [
 [[package]]
 name = "glib"
 version = "0.19.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core#5613c9d139aa8ad7f142be782c6c75f21f1880f2"
+source = "git+https://github.com/gtk-rs/gtk-rs-core#56a5549a7d5a28a20edd6ea1fcbd2f47a750cdd4"
 dependencies = [
  "bitflags 2.4.1",
  "futures-channel",
@@ -745,20 +745,19 @@ dependencies = [
 [[package]]
 name = "glib-macros"
 version = "0.19.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core#5613c9d139aa8ad7f142be782c6c75f21f1880f2"
+source = "git+https://github.com/gtk-rs/gtk-rs-core#56a5549a7d5a28a20edd6ea1fcbd2f47a750cdd4"
 dependencies = [
  "heck",
  "proc-macro-crate",
- "proc-macro-error",
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
 name = "glib-sys"
 version = "0.19.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core#5613c9d139aa8ad7f142be782c6c75f21f1880f2"
+source = "git+https://github.com/gtk-rs/gtk-rs-core#56a5549a7d5a28a20edd6ea1fcbd2f47a750cdd4"
 dependencies = [
  "libc",
  "system-deps",
@@ -779,7 +778,7 @@ dependencies = [
 [[package]]
 name = "gobject-sys"
 version = "0.19.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core#5613c9d139aa8ad7f142be782c6c75f21f1880f2"
+source = "git+https://github.com/gtk-rs/gtk-rs-core#56a5549a7d5a28a20edd6ea1fcbd2f47a750cdd4"
 dependencies = [
  "glib-sys",
  "libc",
@@ -789,7 +788,7 @@ dependencies = [
 [[package]]
 name = "gst-plugin-fmp4"
 version = "0.12.0-alpha.1"
-source = "git+https://github.com/sdroege/gst-plugin-rs#80b58f3b45d2c3adee5684888937a3aa30e30cd7"
+source = "git+https://github.com/sdroege/gst-plugin-rs#fcd57e9ac5e440056ed5b765d277570d2b617df6"
 dependencies = [
  "anyhow",
  "gst-plugin-version-helper",
@@ -803,7 +802,7 @@ dependencies = [
 [[package]]
 name = "gst-plugin-mp4"
 version = "0.12.0-alpha.1"
-source = "git+https://github.com/sdroege/gst-plugin-rs#80b58f3b45d2c3adee5684888937a3aa30e30cd7"
+source = "git+https://github.com/sdroege/gst-plugin-rs#fcd57e9ac5e440056ed5b765d277570d2b617df6"
 dependencies = [
  "anyhow",
  "gst-plugin-version-helper",
@@ -817,7 +816,7 @@ dependencies = [
 [[package]]
 name = "gst-plugin-version-helper"
 version = "0.8.0"
-source = "git+https://github.com/sdroege/gst-plugin-rs#80b58f3b45d2c3adee5684888937a3aa30e30cd7"
+source = "git+https://github.com/sdroege/gst-plugin-rs#fcd57e9ac5e440056ed5b765d277570d2b617df6"
 dependencies = [
  "chrono",
  "toml_edit 0.21.0",
@@ -1466,30 +1465,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
-dependencies = [
- "proc-macro-error-attr",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
-dependencies = [
- "proc-macro2",
- "quote",
- "version_check",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1822,7 +1797,7 @@ checksum = "43576ca501357b9b071ac53cdc7da8ef0cbd9493d8df094cd821777ea6e894d3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -1918,16 +1893,6 @@ checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
 
 [[package]]
 name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "unicode-ident",
-]
-
-[[package]]
-name = "syn"
 version = "2.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee659fb5f3d355364e1f3e5bc10fb82068efbf824a1e9d1c9504244a6469ad53"
@@ -1982,7 +1947,7 @@ checksum = "3dcf4a824cce0aeacd6f38ae6f24234c8e80d68632338ebaa1443b5df9e29e19"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -2037,7 +2002,7 @@ checksum = "5b8a1e28f2deaa14e508979454cb3a223b10b938b45af148bc0986de36f1923b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -2105,7 +2070,7 @@ checksum = "34704c8d6ebcbc939824180af020566b01a7c01f80641264eba0999f6c2b6be7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
 ]
 
 [[package]]
@@ -2212,12 +2177,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "579a42fc0b8e0c63b76519a339be31bed574929511fa53c1a3acae26eb258f29"
 
 [[package]]
-name = "version_check"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
 name = "waker-fn"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2282,7 +2241,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
  "wasm-bindgen-shared",
 ]
 
@@ -2316,7 +2275,7 @@ checksum = "f0eb82fcb7930ae6219a7ecfd55b217f5f0893484b7a13022ebb2b2bf20b5283"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.43",
+ "syn",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
