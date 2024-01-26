@@ -308,39 +308,33 @@ impl GST {
             }
         });
 
-        // appsink.set_callbacks(
-        //     gst_app::AppSinkCallbacks::builder()
-        //         .new_sample(move |sink| {
-        //             let sample = sink
-        //                 .pull_sample()
-        //                 .with_context(|| "Error pulling sample")
-        //                 .map_err(|e| {
-        //                     eprintln!("{:?}", e);
-        //                     gst::FlowError::Eos
-        //                 })?;
-        //             // The muxer only outputs non-empty buffer lists
-        //             let mut buffer_list = sample.buffer_list_owned().expect("no buffer list");
+        appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |sink| {
+                    /*FIXME: this error is happening on the last last element... so we need a way to gracefully end the stream. Find out how the muxer works
+                    no buffer list
+                    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+                    Got error from /GstPipeline:pipeline0/GstAppSink:sink: Panicked: no buffer list ()
+                                         */
 
-        //             Ok(gst::FlowSuccess::Ok)
-        //         })
-        //         .query(move |sink, query| {
-        //             // Handle the seeking query
-        //             if let Some(seeking) = query.downcast_mut::<gst::query::Seeking>() {
-        //                 if seeking.format() == gst::Format::Bytes {
-        //                     // Set the seekable flag based on your custom sink's seekability
-        //                     seeking.set_seekable(true); // Replace with your own logic to determine if the sink is seekable
-        //                     return true;
-        //                 }
-        //             }
+                    let sample = sink
+                        .pull_sample()
+                        .with_context(|| "Error pulling sample")
+                        .map_err(|e| {
+                            eprintln!("{:?}", e);
+                            gst::FlowError::Eos
+                        })?;
+                    // The muxer only outputs non-empty buffer lists
+                    let mut buffer_list = sample.buffer_list_owned().expect("no buffer list");
 
-        //             // Handle other queries if needed
-        //             // ...
+                    for buffer in &*buffer_list {
+                        println!("Found buffer {:?}", buffer);
+                    }
 
-        //             // Call the default query handler for unhandled queries
-        //             sink.parent_query(query)
-        //         })
-        //         .build(),
-        // );
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
+        );
 
         //             println!("buffer is empty {:?}", buffer_list.is_empty());
         //             assert!(!buffer_list.is_empty());
