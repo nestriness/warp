@@ -243,15 +243,19 @@ impl GST {
         // drop(state_lock);
         // let pipeline = gst::parse::launch("videotestsrc num-buffers=2500 ! timecodestamper ! video/x-raw,format=I420,width=1280,height=720,framerate=30/1 ! timeoverlay ! x264enc bframes=0 bitrate=2048 ! video/x-h264,profile=main ! cmafmux fragment-duration=1 header-update-mode=update write-mehd=true ! appsink name=sink").unwrap().downcast::<gst::Pipeline>().unwrap();
         // let pipeline = gst::parse::launch("videotestsrc num-buffers=2500 ! x264enc ! isomp4mux ! appsink name=sink").unwrap().downcast::<gst::Pipeline>().unwrap();
+        //FIXME: run one pipeline at a time, then let downstream push accordingly
         let pipeline = gst::parse::launch(
-            "videotestsrc num-buffers=60 ! video/x-raw,framerate=30/1 ! x264enc ! queue ! mux. \
-             audiotestsrc num-buffers=60 ! audio/x-raw,rate=48000 ! avenc_aac ! queue ! mux. \
-             isomp4mux name=mux ! appsink name=sink \
+            "
+            audiotestsrc num-buffers=60 ! audio/x-raw,rate=48000 ! avenc_aac ! queue ! mux. \
+            cmafmux write-mehd=true header-update-mode=update fragment-duration=1 name=mux ! appsink name=sink \
         ",
         )
         .unwrap()
         .downcast::<gst::Pipeline>()
         .unwrap(); //interleave-time=1  movie-timescale=1
+    //             audiotestsrc num-buffers=60 ! audio/x-raw,rate=48000 ! avenc_aac ! queue ! mux. \
+
+    //videotestsrc num-buffers=60 ! video/x-raw,framerate=30/1 ! x264enc ! queue ! mux. \
 
         let appsink = pipeline
             .by_name("sink")
@@ -342,7 +346,7 @@ impl GST {
                                 println!("Found 'moof' box");
                                 // Process 'moof' box
                             }
-                            
+
                             mp4::BoxType::MdatBox => {
                                 println!("Found 'mdat' box");
                                 // Process 'mdat' box
