@@ -16,16 +16,16 @@ use std::collections::HashMap;
 use std::io::{Cursor, Seek};
 use std::time;
 
-use mp4::{self, BoxHeader};
+use mp4::{self, ReadBox};
 
 struct State {
     // Atoms in init sequence that must be repeated at each key frame.
     ftyp_atom: Option<Vec<u8>>,
     moov_atom: Option<Vec<u8>>,
 
-    bitrate: u64,
-    width: u64,
-    height: u64,
+    // bitrate: u64,
+    // width: u64,
+    // height: u64,
 
     // We hold on to publisher so we don't close then while media is still being published.
     broadcast: broadcast::Publisher,
@@ -49,9 +49,9 @@ impl GST {
         let state = Arc::new(Mutex::new(State {
             ftyp_atom: Some(Vec::new()),
             moov_atom: Some(Vec::new()),
-            bitrate: 2_048_000,
-            width: 1280,
-            height: 720,
+            // bitrate: 2_048_000,
+            // width: 1280,
+            // height: 720,
             broadcast: broadcast.to_owned(),
             catalog: None,
             init: None,
@@ -141,7 +141,7 @@ impl GST {
                     let sample = sink
                         .pull_sample()
                         .with_context(|| "Error pulling sample")
-                        .map_err(|e| gst::FlowError::Eos)?;
+                        .map_err(|_e| gst::FlowError::Eos)?;
 
                     // The muxer only outputs non-empty buffer lists
                     let buffer_list = sample.buffer_list_owned().expect("no buffer list");
@@ -170,13 +170,54 @@ impl GST {
                             }
                             mp4::BoxType::MoovBox => {
                                 println!("Found 'moov' box");
-                                let mut init_segment = Vec::new(); // Buffer to store the concatenated 'ftyp' and 'moov' atoms.
+                                let mut init = Vec::new(); // Buffer to store the concatenated 'ftyp' and 'moov' atoms.
+                                let mut broadcast = state.broadcast.clone();
+                                // Parse the moov box so we can detect the timescales for each track.
+                                let moov_box_cursor = Cursor::new(box_data.clone()); // Create a cursor for the 'moov' box data.
+                                let moov = mp4::MoovBox::read_box(&mut moov_box_cursor, header.size).expect("could not read moov box");
+
                                 match state.ftyp_atom.as_ref() {
                                     Some(ftyp_atom) => {
                                         // Concatenate 'ftyp' and 'moov' atoms.
-                                        init_segment.extend_from_slice(&ftyp_atom);
-                                        init_segment.extend_from_slice(&box_data);
-                                        state.moov_atom = Some(init_segment)
+                                        init.extend_from_slice(&ftyp_atom);
+                                        init.extend_from_slice(&box_data);
+                                        // state.moov_atom = Some(init); //FIXME: just realised, this is wrong
+
+                                        // Create the catalog track with a single segment.
+                                        let mut init_track = broadcast
+                                            .create_track("0.mp4")
+                                            .expect("could not create track");
+
+                                        let init_segment = init_track
+                                            .create_segment(segment::Info {
+                                                sequence: VarInt::ZERO,
+                                                priority: 0,
+                                                expires: None,
+                                            })
+                                            .expect("could not create init_segment");
+
+                                        // Create a single fragment, optionally setting the size
+                                        let mut init_fragment = init_segment
+                                            .final_fragment(VarInt::ZERO)
+                                            .expect("coild not create a single fragment");
+
+                                        init_fragment
+                                            .chunk(init.into())
+                                            .expect("could not create a broadcast chunk");
+
+                                        let mut tracks = HashMap::new();
+
+                                        for trak in &moov.traks {
+                                            let id = trak.tkhd.track_id;
+                                            let name = format!("{}.m4s", id);
+
+                                            let timescale = track_timescale(&moov, id);
+
+                                            // Store the track publisher in a map so we can update it later.
+                                            let track = broadcast.create_track(&name)?;
+                                            let track = Track::new(track, timescale);
+                                            tracks.insert(id, track);
+                                        }
                                     }
                                     None => {}
                                 }
@@ -192,7 +233,6 @@ impl GST {
                         }
                         cursor
                             .seek(SeekFrom::Current(header.size as i64))
-                            // .map_err(|e| gst::FlowError::Eos)?;
                             .expect("Seeking failed");
                     }
 
