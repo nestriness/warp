@@ -32,8 +32,17 @@ rfc6381-codec = "0.1"
 clap = { version = "4", features = ["derive"] }
 gst-plugin-mp4 = { git = "https://github.com/sdroege/gst-plugin-rs", version = "0.12.0-alpha.1" }
 gst-plugin-fmp4 = { git = "https://github.com/sdroege/gst-plugin-rs", version = "0.12.0-alpha.1" }
+# uuid = "1.7.0"
 
 [build-dependencies]
 clap = { version = "4", features = ["derive"] }
 clap_mangen = "0.2"
 url = "2"
+
+[dependencies.uuid]
+version = "1.7.0"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
