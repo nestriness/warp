@@ -297,7 +297,7 @@ impl AudioStream {
     }
 }
 
-fn setup_appsink(appsink: &gst_app::AppSink, mut broadcast: broadcast::Publisher, _is_video: bool) {
+fn setup_appsink(appsink: &gst_app::AppSink, mut broadcast: broadcast::Publisher, is_video: bool) {
     let state = Arc::new(Mutex::new(State {
         ftyp_atom: None,
         broadcast: broadcast.to_owned(),
@@ -415,70 +415,69 @@ fn setup_appsink(appsink: &gst_app::AppSink, mut broadcast: broadcast::Publisher
                                     let moov = mp4::MoovBox::read_box(&mut reader, header.size)
                                         .expect("could not read the moov box");
 
-                                    let uuid = Uuid::new_v4();
+                                    let type_name = if is_video { "video"} else {  "audio"};
 
-                                    let init_name = format!("{}.mp4", uuid);
 
                                     // Create the catalog track with a single segment.
-                                    let mut init_track = broadcast
-                                        .create_track(&init_name)
-                                        .expect("could not create the init broadcast track");
+                                    if !state.init.is_some() {
+                                        let init_name = format!("{}.mp4", type_name);
 
-                                    let init_segment = init_track
-                                        .create_segment(segment::Info {
-                                            sequence: VarInt::ZERO,
-                                            priority: 0,
-                                            expires: None,
-                                        })
-                                        .expect("could not create init segment");
+                                        let mut init_track = broadcast
+                                            .create_track(&init_name)
+                                            .expect("could not create the init broadcast track");
 
-                                    // Create a single fragment, optionally setting the size
-                                    let mut init_fragment = init_segment
-                                        .final_fragment(VarInt::ZERO)
-                                        .expect("could not create the init fragment");
+                                        let init_segment = init_track
+                                            .create_segment(segment::Info {
+                                                sequence: VarInt::ZERO,
+                                                priority: 0,
+                                                expires: None,
+                                            })
+                                            .expect("could not create init segment");
 
-                                    init_fragment.chunk(init.into()).expect(
-                                        "could not insert the moov+ftyp box into the init fragment",
-                                    );
+                                        // Create a single fragment, optionally setting the size
+                                        let mut init_fragment = init_segment
+                                            .final_fragment(VarInt::ZERO)
+                                            .expect("could not create the init fragment");
 
-                                    let mut tracks = HashMap::new();
+                                        init_fragment.chunk(init.into()).expect("could not insert the moov+ftyp box into the init fragment");
 
-                                    for trak in &moov.traks {
-                                        let id = trak.tkhd.track_id;
+                                        let mut tracks = HashMap::new();
 
-                                        let uuid = Uuid::new_v4();
+                                        for trak in &moov.traks {
+                                            let id = trak.tkhd.track_id;
 
-                                        let name = format!("{}.m4s", uuid);
-                                        // let name = format!("{}.m4s", id);
+                                            let uuid = Uuid::new_v4();
 
-                                        let timescale = track_timescale(&moov, id);
+                                            let name = format!("{}.m4s", uuid);
+                                            // let name = format!("{}.m4s", id);
 
-                                        // Store the track publisher in a map so we can update it later.
-                                        let track = broadcast
-                                            .create_track(&name)
-                                            .expect("could not create a broadcast track");
+                                            let timescale = track_timescale(&moov, id);
 
-                                        let track = Track::new(track, timescale);
+                                            // Store the track publisher in a map so we can update it later.
+                                            let track = broadcast
+                                                .create_track(&name)
+                                                .expect("could not create a broadcast track");
 
-                                        tracks.insert(id, track);
+                                            let track = Track::new(track, timescale);
+
+                                            tracks.insert(id, track);
+                                        }
+
+                                        let catalog_name = format!(".catalog_{}", type_name);
+
+                                        let mut catalog = broadcast
+                                            .create_track(&catalog_name)
+                                            .expect("could not create a catalog");
+
+                                        // Create the catalog track
+                                        serve_catalog(&mut catalog, &init_track.name, &moov)
+                                            .expect("could not serve the catalog");
+
+                                        state.broadcast = broadcast.clone();
+                                        state.catalog = Some(catalog);
+                                        state.init = Some(init_track);
+                                        state.tracks = Some(tracks);
                                     }
-
-                                    let uuid = Uuid::new_v4();
-
-                                    let catalog_name = format!(".catalog.{}", uuid);
-
-                                    let mut catalog = broadcast
-                                        .create_track(&catalog_name)
-                                        .expect("could not create a catalog");
-
-                                    // Create the catalog track
-                                    serve_catalog(&mut catalog, &init_track.name, &moov)
-                                        .expect("could not serve the catalog");
-
-                                    state.broadcast = broadcast.clone();
-                                    state.catalog = Some(catalog);
-                                    state.init = Some(init_track);
-                                    state.tracks = Some(tracks);
                                 }
                                 ATOM_TYPE_MOOF => {
                                     // state.moof_atom = Some(atom);
